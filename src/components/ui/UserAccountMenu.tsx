@@ -60,10 +60,13 @@ export const UserAccountMenu: React.FC<UserAccountMenuProps> = ({
       onClick={onAccountClick}
       data-trigger="credits"
     >
-      <FaUserCircle className={`${isMobile ? 'text-xl' : 'text-2xl'} text-blue-300`} />
-      <span className={`font-semibold text-gray-900 dark:text-gray-100 ${isMobile ? 'text-sm' : 'text-base'} ${isMobile ? 'max-w-[120px] truncate' : isTablet ? 'max-w-[150px] truncate' : ''}`}>
-        {userEmail || 'User'}
-      </span>
+      {/* 用户头像 - 如果有用户头像URL则显示，否则显示默认图标 */}
+      <div className="flex items-center justify-center">
+        <FaUserCircle className={`${isMobile ? 'text-xl' : 'text-2xl'} text-blue-500 hover:text-blue-600 transition-colors`} />
+      </div>
+              <span className={`font-medium text-gray-700 dark:text-gray-200 ${isMobile ? 'text-sm' : 'text-base'} ${isMobile ? 'max-w-[120px] truncate' : isTablet ? 'max-w-[150px] truncate' : ''} hover:text-gray-900 dark:hover:text-gray-100 transition-colors`}>
+          {userEmail ? userEmail.split('@')[0] : 'User'}
+        </span>
       {showCreditsTooltip ? (
         <IoIosArrowUp className={`${isMobile ? 'text-base' : 'text-lg'} text-gray-500 transition-transform`} />
       ) : (
@@ -92,6 +95,21 @@ export const UserAccountMenu: React.FC<UserAccountMenuProps> = ({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+            </div>
+          </div>
+
+          {/* 用户信息 */}
+          <div className="px-6 py-4 border-b border-gray-200 dark:border-slate-600">
+            <div className="flex items-center space-x-3">
+              <FaUserCircle className="text-3xl text-blue-500" />
+              <div>
+                <p className="font-semibold text-gray-800 dark:text-white">
+                  {userEmail ? userEmail.split('@')[0] : 'User'}
+                </p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {userEmail || 'user@example.com'}
+                </p>
+              </div>
             </div>
           </div>
 

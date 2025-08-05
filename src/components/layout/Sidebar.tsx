@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useApp } from '@/context/AppContext';
 import apiClient from '@/lib/api';
 
@@ -47,9 +47,15 @@ const sidebarItems = [
     activeIcon: '/icons/best-icon-chosen.png',
     href: '/best',
   },
+  {
+    label: 'FAQ Page' as const,
+    icon: '/icons/best-icon.png',
+    activeIcon: '/icons/best-icon-chosen.png',
+    href: '/faq',
+  },
 ] as const;
 
-export const Sidebar = () => {
+const SidebarContent = () => {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { 
@@ -634,5 +640,13 @@ export const Sidebar = () => {
         </div>
       </div>
     </>
+  );
+};
+
+export const Sidebar = () => {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <SidebarContent />
+    </Suspense>
   );
 }; 

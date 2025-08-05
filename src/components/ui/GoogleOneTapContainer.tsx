@@ -13,6 +13,18 @@ export const GoogleOneTapContainer: React.FC<GoogleOneTapContainerProps> = ({
   isMobile,
   isTablet,
 }) => {
+  // 使用useEffect来避免水合错误
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // 在客户端渲染之前不显示组件
+  if (!mounted) {
+    return null;
+  }
+
   return (
     <div 
       id="google-one-tap-button"

@@ -86,6 +86,7 @@ const navs = [
       document.getElementById('faq')?.scrollIntoView();
     }
   },
+
 ];
 
 export const Header = () => {
@@ -97,7 +98,15 @@ export const Header = () => {
   const accountRef = useRef<HTMLDivElement>(null);
 
   // 用户状态
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    // 初始化时检查localStorage中的登录状态
+    if (typeof window !== 'undefined') {
+      const storedIsLoggedIn = localStorage.getItem('alternativelyIsLoggedIn');
+      const storedEmail = localStorage.getItem('alternativelyCustomerEmail');
+      return storedIsLoggedIn === 'true' && !!storedEmail;
+    }
+    return false;
+  });
   const [isOneTapShown, setIsOneTapShown] = useState(false);
   const [removeWatermark, setRemoveWatermark] = useState(false);
   const [taskNotificationEmail, setTaskNotificationEmail] = useState(false);
@@ -156,17 +165,35 @@ export const Header = () => {
   useEffect(() => {
     const syncUserEmail = () => {
       const storedEmail = localStorage.getItem('alternativelyCustomerEmail');
-      const storedIsLoggedIn = localStorage.getItem('alternativelyIsLoggedIn');
-      if (storedEmail && storedIsLoggedIn === 'true') {
+      if (storedEmail) {
         setUserEmail(storedEmail);
-        setIsLoggedIn(true);
       }
     };
     
+    // 初始化时同步用户邮箱
     syncUserEmail();
+    
     window.addEventListener('alternativelyLoginSuccess', syncUserEmail);
-    return () => window.removeEventListener('alternativelyLoginSuccess', syncUserEmail);
+    return () => {
+      window.removeEventListener('alternativelyLoginSuccess', syncUserEmail);
+    };
   }, [setUserEmail]);
+
+  // 添加token失效事件监听器
+  useEffect(() => {
+    const handleTokenExpired = () => {
+      console.log('Header: Token已失效，清除登录状态');
+      setIsLoggedIn(false);
+      setUserEmail('');
+      setShowCreditsTooltip(false);
+      message.error('登录已过期，请重新登录');
+    };
+    
+    window.addEventListener('tokenExpired', handleTokenExpired);
+    return () => {
+      window.removeEventListener('tokenExpired', handleTokenExpired);
+    };
+  }, []);
 
   // URL 参数处理
   useEffect(() => {

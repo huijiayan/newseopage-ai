@@ -1,20 +1,40 @@
 "use client";
 
 import ScrollToTopButton from '@/components/ui/ScrollToTopButton';
-import React from 'react';
+import React, { useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import CustomizableResearchUI from '@/components/ui/CustomizableResearchUI';
 import SubscriptionCard from '@/components/ui/SubscriptionCard';
 import CTAModule from '@/components/ui/CTAModule';
 import InvisibleMarketingGraphic from '@/components/ui/InvisibleMarketingGraphic';
 import { Hero } from '@/components/ui/Hero';
+import { ResearchTool, injectResearchToolStyles } from '@/components/research-tool';
 
-// Alternative 页面 - 静态内容展示
-export default function AlternativePage() {
+// Alternative 页面内容组件
+function AlternativePageContent() {
+  const searchParams = useSearchParams();
+  const conversationId = searchParams.get('conversationId');
+  const mode = searchParams.get('mode') as 'normal' | 'recover' || 'normal';
+
+  // 确保样式文件被正确注入
+  useEffect(() => {
+    if (conversationId) {
+      injectResearchToolStyles();
+    }
+  }, [conversationId]);
+
   return (
       <div className="min-h-[calc(100vh-66px)] bg-[#F8FAFB] dark:bg-dark-navy">
  
-        {/* Hero 组件 */}
-        <Hero />
+        {/* 动态组件：根据 URL 参数决定显示 Hero 还是 ResearchTool */}
+        {conversationId ? (
+          <ResearchTool 
+            conversationId={conversationId} 
+            mode={mode}
+          />
+        ) : (
+          <Hero />
+        )}
 
         {/* InvisibleMarketingGraphic 组件 */}
         <InvisibleMarketingGraphic />
@@ -322,5 +342,14 @@ export default function AlternativePage() {
               <CTAModule />
 
       </div>
+  );
+}
+
+// Alternative 页面 - 支持动态组件切换
+export default function AlternativePage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <AlternativePageContent />
+    </Suspense>
   );
 } 

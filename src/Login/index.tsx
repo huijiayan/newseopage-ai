@@ -294,6 +294,24 @@ export default function AuthManager(props: AuthManagerProps) {
     };
   }, []);
 
+  // 添加token失效事件监听器
+  useEffect(() => {
+    const handleTokenExpired = () => {
+      console.log('Token已失效，清除登录状态');
+      setIsLoggedIn(false);
+      setUserEmail('');
+      setAppUserEmail('');
+      message.error('登录已过期，请重新登录');
+      // 可以选择自动显示登录弹窗
+      setShowLoginModal(true);
+    };
+    
+    window.addEventListener('tokenExpired', handleTokenExpired);
+    return () => {
+      window.removeEventListener('tokenExpired', handleTokenExpired);
+    };
+  }, [setShowLoginModal]);
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);

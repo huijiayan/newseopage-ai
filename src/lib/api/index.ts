@@ -82,9 +82,9 @@ const vercelApiClient = axios.create({
 
 // const API_URL = 'https://api.websitelm.com/v1';
 // const API_URL = 'http://api.zhuyuejoey.com/v1';
-const CHAT_API_URL = 'https://agents.zhuyuejoey.com'; // 聊天服务器地址
-const API_URL = 'https://api.websitelm.com/v1'; // 主API服务器地址
-// const CHAT_WS_URL = 'wss://chat-ws.example.com'; // WebSocket服务器地址，稍后请替换为实际地址 - 已注释，改用SSE
+const CHAT_API_URL = process.env.NEXT_PUBLIC_CHAT_API_URL || 'https://agents.zhuyuejoey.com'; // 聊天服务器地址
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.websitelm.com/v1'; // 主API服务器地址
+const CHAT_WS_URL = process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuejoey.com'; // WebSocket服务器地址
 
 
 // 创建 axios 实例，更新配置
@@ -122,6 +122,25 @@ chatApiClient.interceptors.request.use((config: any) => {
   }
   return config;
 });
+
+// 聊天API客户端响应拦截器处理token失效
+chatApiClient.interceptors.response.use(
+  (response: any) => response,
+  (error: any) => {
+    if (error.response && error.response.status === 401) {
+      // 触发一个自定义事件
+      const tokenExpiredEvent = new CustomEvent('tokenExpired');
+      window.dispatchEvent(tokenExpiredEvent);
+      
+      // 清除本地存储的token
+      localStorage.removeItem('alternativelyAccessToken');
+      localStorage.removeItem('alternativelyIsLoggedIn');
+      localStorage.removeItem('alternativelyCustomerEmail');
+      localStorage.removeItem('alternativelyCustomerId');
+    }
+    return Promise.reject(error);
+  }
+);
 
 // 添加响应拦截器处理token失效
 apiClient.interceptors.response.use(
@@ -322,38 +341,55 @@ const getAlternativeResult = async (websiteId: any) => {
   }
 };
 
-// 创建新聊天 - 使用SSE流式响应
+// 创建新聊天 - 使用WebSocket流式响应
 const chatWithAI = async (chatType: any, message: any, conversationId: any, onMessage?: (data: any) => void) => {
   try {
-    // 如果提供了 onMessage 回调，使用 SSE 流式响应
+    console.log('🔍 chatWithAI 调用开始:', {
+      chatType,
+      message: message?.substring(0, 100) + (message?.length > 100 ? '...' : ''),
+      conversationId,
+      hasOnMessage: !!onMessage
+    });
+
+    // 如果提供了 onMessage 回调，使用 WebSocket 流式响应
     if (onMessage) {
       const token = localStorage.getItem('alternativelyAccessToken');
-      const sseUrl = `${CHAT_API_URL}/api/chat/stream?conversationId=${conversationId}&token=${token}`;
-      const eventSource = new EventSource(sseUrl);
+      console.log('🔍 WebSocket模式 - Token:', token ? '存在' : '不存在');
+      
+      const wsUrl = `${CHAT_WS_URL}?conversationId=${conversationId}&token=${token}`;
+      console.log('🔍 WebSocket URL:', wsUrl);
+      
+      const websocket = new WebSocket(wsUrl);
       
       // 发送初始消息
-      await chatApiClient.post('/api/chat/new', {
+      const initialResponse = await chatApiClient.post('/api/chat/new', {
         chatType,
         message,
         conversationId,
       });
+      console.log('🔍 WebSocket初始消息响应:', initialResponse.data);
       
-      // 监听 SSE 消息
-      eventSource.onmessage = (event) => {
+      // 监听 WebSocket 消息
+      websocket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          console.log('🔍 WebSocket消息接收:', data);
           onMessage(data);
         } catch (error) {
-          console.error('Failed to parse SSE message:', error);
+          console.error('Failed to parse WebSocket message:', error);
         }
       };
       
-      eventSource.onerror = (error) => {
-        console.error('SSE connection error:', error);
-        eventSource.close();
+      websocket.onerror = (error) => {
+        console.error('WebSocket connection error:', error);
+        websocket.close();
       };
       
-      return { eventSource }; // 返回 EventSource 实例以便外部控制
+      websocket.onclose = (event) => {
+        console.log('WebSocket connection closed:', event.code, event.reason);
+      };
+      
+      return { websocket }; // 返回 WebSocket 实例以便外部控制
     } else {
       // 传统的 HTTP 响应
       const response = await chatApiClient.post('/api/chat/new', {
@@ -361,10 +397,11 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, onMe
         message,
         conversationId,
       });
+      
       return response.data;
     }
-  } catch (error) {
-    console.error('Failed to create new chat:', error);
+  } catch (error: any) {
+    console.error('Failed to chat with AI:', error);
     throw error;
   }
 };
@@ -436,7 +473,7 @@ const getAlternativeChatHistory = async (conversationId: any) => {
 // 新增：Google One Tap 登录方法
 const googleOneTapLogin = async (credential: any) => {
   try {
-    const response = await apiClient.post('/auth/google', {
+    const response = await apiClient.post('/customer/google/one-tap', {
       credential
     });
     return response.data;
@@ -1155,40 +1192,40 @@ apiClient.getGscSites = getGscSites;
 apiClient.getSiteAnalytics = getSiteAnalytics;
 apiClient.uploadFavicon = uploadFavicon;
 
-// WebSocket连接辅助函数 - 已注释，改用SSE
-// export const createChatWebSocket = (conversationId: string) => {
-//   const token = localStorage.getItem('alternativelyAccessToken');
-//   const wsUrl = `${CHAT_WS_URL}?conversationId=${conversationId}&token=${token}`;
-//   return new WebSocket(wsUrl);
-// };
-
-// SSE连接辅助函数
-export const createChatSSE = (conversationId: string) => {
+// WebSocket连接辅助函数
+export const createChatWebSocket = (conversationId: string) => {
   const token = localStorage.getItem('alternativelyAccessToken');
-  const sseUrl = `${CHAT_API_URL}/api/chat/stream?conversationId=${conversationId}&token=${token}`;
-  return new EventSource(sseUrl);
+  const wsUrl = `${CHAT_WS_URL}?conversationId=${conversationId}&token=${token}`;
+  return new WebSocket(wsUrl);
 };
+
+// SSE连接辅助函数 - 已注释，改用WebSocket
+// export const createChatSSE = (conversationId: string) => {
+//   const token = localStorage.getItem('alternativelyAccessToken');
+//   const sseUrl = `${CHAT_API_URL}/api/chat/stream?conversationId=${conversationId}&token=${token}`;
+//   return new EventSource(sseUrl);
+// };
 
 // 使用示例：
 // 1. 传统HTTP聊天：
 // const response = await apiClient.chatWithAI('search', 'hello', 'conv123');
 //
-// 2. SSE流式聊天：
-// const { eventSource } = await apiClient.chatWithAI('search', 'hello', 'conv123', (data) => {
+// 2. WebSocket流式聊天：
+// const { websocket } = await apiClient.chatWithAI('search', 'hello', 'conv123', (data) => {
 //   console.log('收到流式消息:', data);
 // });
 // // 记得在适当时机关闭连接
-// eventSource.close();
+// websocket.close();
 //
-// 3. 直接使用SSE连接：
-// const sse = createChatSSE('conv123');
-// sse.onmessage = (event) => {
+// 3. 直接使用WebSocket连接：
+// const ws = createChatWebSocket('conv123');
+// ws.onmessage = (event) => {
 //   const data = JSON.parse(event.data);
-//   console.log('SSE消息:', data);
+//   console.log('WebSocket消息:', data);
 // };
-// sse.onerror = (error) => {
-//   console.error('SSE错误:', error);
-//   sse.close();
+// ws.onerror = (error) => {
+//   console.error('WebSocket错误:', error);
+//   ws.close();
 // };
 
 export default apiClient as ApiClient;
