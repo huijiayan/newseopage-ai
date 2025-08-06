@@ -90,7 +90,7 @@ const CHAT_WS_URL = process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuej
 // 创建 axios 实例，更新配置
 const apiClient: ApiClient = axios.create({
   baseURL: API_URL,
-  timeout: 300000,
+  timeout: 25000, // 减少到25秒，适合Vercel环境
   headers: {
     'Content-Type': 'application/json',
   },  
@@ -99,7 +99,7 @@ const apiClient: ApiClient = axios.create({
 // 创建聊天专用的 axios 实例 - 使用新的聊天服务器地址
 const chatApiClient = axios.create({
   baseURL: CHAT_API_URL,
-  timeout: 300000,
+  timeout: 25000, // 减少到25秒，适合Vercel环境
   headers: {
     'Content-Type': 'application/json',
   },
@@ -688,7 +688,7 @@ const uploadMedia = async (formData: any) => {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 5 * 60 * 1000, // 5 minutes
+      timeout: 60000, // 减少到60秒
     });
     return response.data;
   } catch (error) {
@@ -1116,7 +1116,7 @@ const uploadFavicon = async (file: any) => {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 5 * 60 * 1000, // 5 minutes
+      timeout: 60000, // 减少到60秒
     });
     return response.data;
   } catch (error) {

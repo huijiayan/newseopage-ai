@@ -7,6 +7,9 @@ const nextConfig = {
   images: {
     domains: ['api.websitelm.com', 'agents.zhuyuejoey.com'],
     formats: ['image/webp', 'image/avif'],
+    // 添加图片优化设置
+    deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
   },
   
   // 压缩配置
@@ -30,6 +33,11 @@ const nextConfig = {
             key: 'Referrer-Policy',
             value: 'origin-when-cross-origin',
           },
+          // 添加缓存控制
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
         ],
       },
     ];
@@ -44,6 +52,25 @@ const nextConfig = {
         permanent: true,
       },
     ];
+  },
+  
+  // 优化webpack配置
+  webpack: (config, { dev, isServer }) => {
+    // 生产环境优化
+    if (!dev && !isServer) {
+      config.optimization.splitChunks = {
+        chunks: 'all',
+        cacheGroups: {
+          vendor: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'vendors',
+            chunks: 'all',
+          },
+        },
+      };
+    }
+    
+    return config;
   },
 };
  
