@@ -1,0 +1,34 @@
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import './globals.css';
+import { Layout } from '@/components/layout/Layout';
+import { AppProvider } from '@/context/AppContext';
+import { MessageProvider } from '@/components/ui/CustomMessage';
+
+const inter = Inter({ subsets: ['latin'] });
+
+export const metadata: Metadata = {
+  title: 'NewSEOPage.ai - AI-Powered SEO Tools',
+  description: 'Optimize your website SEO with AI-powered tools and analytics',
+  icons: {
+    icon: '/favicon.ico',
+  },
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body className={inter.className}>
+        <AppProvider>
+          <MessageProvider>
+            <Layout>{children}</Layout>
+          </MessageProvider>
+        </AppProvider>
+      </body>
+    </html>
+  );
+}
