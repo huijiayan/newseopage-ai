@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useRouter } from 'next/navigation';
 import { SendButton } from "./SendButton";
+import ChatInput from "./ChatInput";
 import apiClient from '@/lib/api/index';
 
 export const Hero: React.FC = () => {
@@ -10,7 +11,7 @@ export const Hero: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isMessageSending, setIsMessageSending] = useState(false);
   const [isProcessingTask, setIsProcessingTask] = useState(false);
-  const [currentConversationId, setCurrentConversationId] = useState(null);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showSlogan, setShowSlogan] = useState(true);
@@ -31,41 +32,7 @@ export const Hero: React.FC = () => {
     return () => clearTimeout(loadTimer);
   }, []);
 
-  // 验证域名的函数
-  const validateDomain = (input: string): boolean => {
-    let domain = input.trim();
-    
-    // 检查是否为空
-    if (!domain) {
-      return false;
-    }
-    
-    // 检查是否只包含数字
-    if (/^\d+$/.test(domain)) {
-      return false;
-    }
 
-    // 如果没有协议，添加https://
-    if (!domain.match(/^https?:\/\//i)) {
-      domain = 'https://' + domain;
-    }
-
-    try {
-      const url = new URL(domain);
-      domain = url.hostname;
-    } catch (error) {
-      return false;
-    }
-
-    // 检查是否包含点号（必须有顶级域名）
-    if (!domain.includes('.')) {
-      return false;
-    }
-
-    // 使用更严格的域名正则表达式
-    const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
-    return domainRegex.test(domain);
-  };
 
   // 获取页面模式的函数
   const getPageMode = (): string => {
@@ -164,12 +131,7 @@ export const Hero: React.FC = () => {
     }
     if (!formattedInput || isMessageSending) return;
 
-    // 域名验证
-    if (!validateDomain(formattedInput)) {
-      showAlertMessage('Please enter a valid website domain, such as example.com or https://example.com');
-      setIsSubmitting(false);
-      return;
-    }
+
 
     // --- 登录状态检查 ---
     const isLoggedIn = localStorage.getItem('alternativelyIsLoggedIn') === 'true';
@@ -217,7 +179,7 @@ export const Hero: React.FC = () => {
         
         // 首次调用chatWithAI，不传conversationId参数，让API创建新的会话
         let chatResponse;
-        let conversationId;
+        let conversationId: string | null = null;
         try {
           console.log('🔍 Hero.tsx - 准备调用API，参数:', {
             chatType: getPageMode(),
@@ -227,10 +189,13 @@ export const Hero: React.FC = () => {
           
           chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
           
-          // 检查两种可能的字段名
-          conversationId = chatResponse?.conversationId || chatResponse?.conversation_id;
-          
-          if (!conversationId) {
+          // 检查响应格式 - 现在只返回WebSocket对象
+          if (chatResponse && 'websocket' in chatResponse) {
+            console.log('🔍 WebSocket模式，创建聊天成功');
+            // WebSocket模式，conversationId会通过WebSocket消息返回
+            // 暂时使用时间戳作为临时conversationId
+            conversationId = `temp-${Date.now()}`;
+          } else {
             messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
             setIsMessageSending(false);
             setLoading(false);
@@ -273,8 +238,8 @@ export const Hero: React.FC = () => {
         return;
         
         // 如果响应中包含answer，处理它
-        if (chatResponse.message?.answer) {
-          const rawAnswer = chatResponse.message.answer;
+        if (chatResponse && !('websocket' in chatResponse) && (chatResponse as any)?.message?.answer) {
+          const rawAnswer = (chatResponse as any).message.answer;
           
           // 处理URL_GET标记的情况
           if (rawAnswer.includes('[URL_GET]')) {
@@ -336,8 +301,9 @@ export const Hero: React.FC = () => {
       }
       
       const response = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
-      if (response?.message?.answer) {
-        const rawAnswer = response.message.answer;
+      // 检查响应格式
+      if (response && !('websocket' in response) && (response as any)?.message?.answer) {
+        const rawAnswer = (response as any).message.answer;
         
         if (rawAnswer.includes('[URL_GET]')) {
           localStorage.setItem('currentProductUrl', formattedInput);
@@ -407,37 +373,7 @@ export const Hero: React.FC = () => {
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setUserInput(e.target.value);
-  };
 
-  const handleSendClick = () => {
-    // 先验证域名
-    if (!userInput.trim()) {
-      showAlertMessage('Please enter a website domain');
-      return;
-    }
-    
-    if (/^\d+$/.test(userInput.trim())) {
-      showAlertMessage('Please enter a valid website domain, not just numbers');
-      return;
-    }
-    
-    if (!validateDomain(userInput)) {
-      showAlertMessage('Please enter a valid website domain, such as example.com or https://example.com');
-      return;
-    }
-    
-    // 验证通过，调用API
-    handleUserInput(userInput);
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-                                e.preventDefault();
-      handleSendClick(); // 使用handleSendClick来触发验证
-    }
-  };
 
   // 显示警示框的函数
   const showAlertMessage = (message: string) => {
@@ -495,24 +431,16 @@ export const Hero: React.FC = () => {
 
       {/* 输入框 */}
       <div className="w-full max-w-md sm:max-w-lg lg:max-w-3xl mb-8 sm:mb-12 px-2 sm:px-1">
-        <div className="bg-white dark:bg-gray-800 rounded-xl sm:rounded-2xl shadow-md border border-blue-200 dark:border-blue-700 relative px-3 sm:px-4 pt-2 pb-20 sm:pb-28 hover:shadow-lg transition-shadow duration-300">
-          <input
-            type="text"
-            value={userInput}
-            onChange={handleInputChange}
-            onKeyPress={handleKeyPress}
-            className="w-full bg-transparent outline-none text-gray-700 dark:text-gray-200 text-base sm:text-lg placeholder-gray-400 dark:placeholder-gray-500 leading-loose"
-            placeholder="Please enter your website domain...."
-            disabled={isSubmitting || isMessageSending || isProcessingTask}
-          />
-          <div className="absolute bottom-3 right-3">
-            <SendButton 
-              onClick={handleSendClick}
-              disabled={isSubmitting || isMessageSending || isProcessingTask || !userInput.trim()}
-              hasContent={userInput.trim().length > 0}
-            />
-          </div>
-        </div>
+        <ChatInput
+          userInput={userInput}
+          setUserInput={setUserInput}
+          onSendMessage={handleUserInput}
+          loading={loading}
+          isMessageSending={isMessageSending}
+          isProcessingTask={isProcessingTask}
+          disabled={isSubmitting}
+          placeholder="Please enter your website domain...."
+        />
       </div>
 
 

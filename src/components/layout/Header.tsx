@@ -367,7 +367,6 @@ export const Header = () => {
                   width={getLogoSize().width} 
                   height={getLogoSize().height} 
                   className={getLogoSize().className}
-                  style={{ width: 'auto', height: 'auto' }}
                 />
                 <span className={`${getSpacing()} ${getTextSize()} text-gray-900 dark:text-white ${isMobile ? 'hidden' : 'inline-block'}`}>
                   {getRouteText()}

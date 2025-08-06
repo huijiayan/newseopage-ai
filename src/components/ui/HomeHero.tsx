@@ -89,9 +89,8 @@ export const HomeHero = () => {
               alt="SEOPage.ai"
               width={210}
               height={40}
-              className="mb-2"
+              className="mb-2 h-auto"
               priority
-              style={{ width: 'auto', height: 'auto' }}
             />
           </div>
           <h2 className="text-[38px] leading-[1.15] font-extrabold bg-gradient-to-r from-[#0ea5e9] via-[#6366f1] to-[#a855f7] bg-clip-text text-transparent mb-2">Grow Your Search<br/>Estate with AI Agent</h2>

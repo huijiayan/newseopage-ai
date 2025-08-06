@@ -1,13 +1,14 @@
 {
   "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    }
+  ],
   "env": {
     "NEXT_PUBLIC_API_URL": "https://api.websitelm.com/v1",
     "NEXT_PUBLIC_CHAT_API_URL": "https://agents.zhuyuejoey.com",
     "NEXT_PUBLIC_CHAT_WS_URL": "wss://agents.zhuyuejoey.com"
-  },
-  "functions": {
-    "src/app/**/*.tsx": {
-      "maxDuration": 30
-    }
   }
 } 

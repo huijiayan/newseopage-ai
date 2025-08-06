@@ -106,11 +106,11 @@ export const useHeaderLogic = (): UseHeaderLogicReturn => {
   // 计算函数
   const getLogoSize = () => {
     if (isMobile) {
-      return { width: 72, height: 21, className: "w-[6vw] max-w-[80px] min-w-[60px]" };
+      return { width: 72, height: 21, className: "w-[6vw] max-w-[80px] min-w-[60px] h-auto" };
     } else if (isTablet) {
-      return { width: 84, height: 24.5, className: "w-[7vw] max-w-[96px] min-w-[70px]" };
+      return { width: 84, height: 24.5, className: "w-[7vw] max-w-[96px] min-w-[70px] h-auto" };
     } else {
-      return { width: 96, height: 28, className: "w-[8vw] sm:w-[9.6vw] md:w-[11.2vw] max-w-[112px] min-w-[80px]" };
+      return { width: 96, height: 28, className: "w-[8vw] sm:w-[9.6vw] md:w-[11.2vw] max-w-[112px] min-w-[80px] h-auto" };
     }
   };
 

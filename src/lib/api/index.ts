@@ -90,7 +90,7 @@ const CHAT_WS_URL = process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuej
 // 创建 axios 实例，更新配置
 const apiClient: ApiClient = axios.create({
   baseURL: API_URL,
-  timeout: 25000, // 减少到25秒，适合Vercel环境
+  timeout: 300000,
   headers: {
     'Content-Type': 'application/json',
   },  
@@ -99,7 +99,7 @@ const apiClient: ApiClient = axios.create({
 // 创建聊天专用的 axios 实例 - 使用新的聊天服务器地址
 const chatApiClient = axios.create({
   baseURL: CHAT_API_URL,
-  timeout: 25000, // 减少到25秒，适合Vercel环境
+  timeout: 300000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -351,55 +351,61 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, onMe
       hasOnMessage: !!onMessage
     });
 
-    // 如果提供了 onMessage 回调，使用 WebSocket 流式响应
-    if (onMessage) {
-      const token = localStorage.getItem('alternativelyAccessToken');
-      console.log('🔍 WebSocket模式 - Token:', token ? '存在' : '不存在');
-      
-      const wsUrl = `${CHAT_WS_URL}?conversationId=${conversationId}&token=${token}`;
-      console.log('🔍 WebSocket URL:', wsUrl);
-      
-      const websocket = new WebSocket(wsUrl);
-      
-      // 发送初始消息
+    // 检查是否在客户端环境
+    if (typeof window === 'undefined') {
+      throw new Error('WebSocket只在客户端可用');
+    }
+
+    // 获取访问令牌
+    const token = localStorage.getItem('alternativelyAccessToken');
+    console.log('🔍 WebSocket模式 - Token:', token ? '存在' : '不存在');
+    
+    if (!token) {
+      console.error('🔍 WebSocket模式 - 缺少Token');
+      throw new Error('缺少访问令牌');
+    }
+    
+    // 使用正确的WebSocket URL格式
+    const wsUrl = `${CHAT_WS_URL}/ws/chat/${conversationId || 'new'}?token=${token}`;
+    console.log('🔍 WebSocket URL:', wsUrl);
+    
+    const websocket = new WebSocket(wsUrl);
+    
+    // 发送初始消息
+    try {
       const initialResponse = await chatApiClient.post('/api/chat/new', {
         chatType,
         message,
         conversationId,
       });
       console.log('🔍 WebSocket初始消息响应:', initialResponse.data);
-      
-      // 监听 WebSocket 消息
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('🔍 WebSocket消息接收:', data);
-          onMessage(data);
-        } catch (error) {
-          console.error('Failed to parse WebSocket message:', error);
-        }
-      };
-      
-      websocket.onerror = (error) => {
-        console.error('WebSocket connection error:', error);
-        websocket.close();
-      };
-      
-      websocket.onclose = (event) => {
-        console.log('WebSocket connection closed:', event.code, event.reason);
-      };
-      
-      return { websocket }; // 返回 WebSocket 实例以便外部控制
-    } else {
-      // 传统的 HTTP 响应
-      const response = await chatApiClient.post('/api/chat/new', {
-        chatType,
-        message,
-        conversationId,
-      });
-      
-      return response.data;
+    } catch (error) {
+      console.error('🔍 WebSocket初始消息发送失败:', error);
     }
+    
+    // 监听 WebSocket 消息
+    websocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('🔍 WebSocket消息接收:', data);
+        if (onMessage) {
+          onMessage(data);
+        }
+      } catch (error) {
+        console.error('Failed to parse WebSocket message:', error);
+      }
+    };
+    
+    websocket.onerror = (error) => {
+      console.error('WebSocket connection error:', error);
+      websocket.close();
+    };
+    
+    websocket.onclose = (event) => {
+      console.log('WebSocket connection closed:', event.code, event.reason);
+    };
+    
+    return { websocket }; // 返回 WebSocket 实例以便外部控制
   } catch (error: any) {
     console.error('Failed to chat with AI:', error);
     throw error;
@@ -688,7 +694,7 @@ const uploadMedia = async (formData: any) => {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 60000, // 减少到60秒
+      timeout: 5 * 60 * 1000, // 5 minutes
     });
     return response.data;
   } catch (error) {
@@ -1116,7 +1122,7 @@ const uploadFavicon = async (file: any) => {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 60000, // 减少到60秒
+      timeout: 5 * 60 * 1000, // 5 minutes
     });
     return response.data;
   } catch (error) {

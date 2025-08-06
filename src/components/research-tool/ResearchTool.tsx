@@ -1,10 +1,9 @@
-
 // 这是整个聊天页面的主要功能组件
 
 "use client";
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useMessage } from '@/components/ui/CustomMessage';
-import TextArea from 'antd/es/input/TextArea';
+import ChatInput from '@/components/ui/ChatInput';
 import { InfoCircleOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
 import type { ResearchToolProps } from '@/types/research-tool';
 import { useResearchTool } from './hooks/useResearchTool';
@@ -15,10 +14,12 @@ import {
   linkifyDomains,
   isJsonArrayMessage,
   isDomainListMessage,
-  validateDomain,
   injectResearchToolStyles
 } from './utils/research-tool-utils';
 import apiClient from './utils/mock-api';
+import { useWebSocketChat } from '@/hooks/useWebSocketChat';
+import { WebSocketStatus } from './components/WebSocketStatus';
+import { WebSocketDebug } from './components/WebSocketDebug';
 
 // 这是整个聊天页面的主要功能组件
 export const ResearchTool: React.FC<ResearchToolProps> = ({
@@ -47,7 +48,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const [editingPage, setEditingPage] = React.useState<any>(null);
   const [currentWebsiteId, setCurrentWebsiteId] = React.useState<string>('');
   const [hubPageIds, setHubPageIds] = React.useState<string[]>([]);
-  const [shouldConnectWS, setShouldConnectWS] = React.useState(false);
+
   const [startedTaskCountRef] = React.useState(React.useRef(0));
   const [retryCountRef] = React.useState(React.useRef(0));
   const [codeContainerRef] = React.useState(React.useRef<HTMLPreElement>(null));
@@ -98,11 +99,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     containerSize,
     setContainerSize,
     messageCollapsed,
+    currentConversationId,
+    setCurrentConversationId,
     setMessageCollapsed,
     isStatusBarExpanded,
     setIsStatusBarExpanded,
-    currentConversationId,
-    setCurrentConversationId,
     apiDetailModal,
     setApiDetailModal,
     deletePageConfirm,
@@ -136,6 +137,110 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     pathname,
   } = useResearchTool(conversationId, mode);
 
+  // WebSocket聊天功能
+  const {
+    isConnected: wsConnected,
+    isConnecting: wsConnecting,
+    connectionState: wsConnectionState,
+    error: wsError,
+    connect: wsConnect,
+    disconnect: wsDisconnect,
+    sendMessage: wsSendMessage,
+    reconnect: wsReconnect,
+    chatService: wsChatService
+  } = useWebSocketChat({
+    conversationId: currentConversationId ?? undefined,
+    autoConnect: true, // 启用自动连接
+    onMessage: (data) => {
+      console.log('🔍 收到WebSocket消息:', data);
+      // 处理WebSocket消息
+      if (data.type === 'message' && data.content) {
+        const thinkingMessageId = `thinking-${Date.now()}`;
+        messageHandler.updateAgentMessage(data.content, thinkingMessageId);
+      }
+    },
+    onError: (error) => {
+      console.error('WebSocket错误:', error);
+      messageHandler.addSystemMessage(`⚠️ WebSocket连接错误: ${error?.message || '未知错误'}`);
+    },
+    onClose: (event) => {
+      console.log('WebSocket连接已关闭:', event);
+      if (event.code !== 1000) {
+        messageHandler.addSystemMessage('⚠️ WebSocket连接已断开，正在尝试重连...');
+      }
+    },
+    onOpen: () => {
+      console.log('WebSocket连接已建立');
+      messageHandler.addSystemMessage('🔗 WebSocket连接已建立，可以开始实时聊天');
+    }
+  });
+
+  // 当conversationId变化时，尝试连接WebSocket并恢复历史记录
+  useEffect(() => {
+    if (currentConversationId && !wsConnected && !wsConnecting) {
+      console.log('🔍 尝试连接WebSocket，conversationId:', currentConversationId);
+      wsConnect(currentConversationId);
+      
+      // 根据图片规则：当用户继续聊天时，系统会恢复历史记录
+      if (mode === 'recover' || conversationId) {
+        console.log('🔍 恢复聊天历史记录');
+        loadChatHistory(currentConversationId);
+      }
+    }
+  }, [currentConversationId, wsConnected, wsConnecting, wsConnect, mode, conversationId]);
+
+  // 加载聊天历史记录
+  const loadChatHistory = async (conversationId: string) => {
+    try {
+      const historyResponse = await apiClient.getAlternativeChatHistory(conversationId);
+      if (historyResponse?.code === 200 && historyResponse.data) {
+        // 按时间顺序显示所有消息
+        const sortedMessages = historyResponse.data.sort((a: any, b: any) => 
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+        
+        // 恢复消息到界面
+        sortedMessages.forEach((msg: any) => {
+          if (msg.source === 'user') {
+            messageHandler.addUserMessage(msg.content);
+          } else if (msg.source === 'agent') {
+            messageHandler.addAgentThinkingMessage();
+            messageHandler.updateAgentMessage(msg.content, `thinking-${Date.now()}`);
+          }
+        });
+        
+        console.log('🔍 聊天历史记录已恢复');
+      }
+    } catch (error) {
+      console.error('加载聊天历史记录失败:', error);
+    }
+  };
+
+  // 处理聊天响应的辅助函数
+  const handleChatResponse = async (rawAnswer: string, thinkingMessageId: string, tempConversationId: string | null, formattedInput: string) => {
+    if (rawAnswer.includes('[URL_GET]')) {
+      localStorage.setItem('currentProductUrl', formattedInput);
+      messageHandler.updateAgentMessage(rawAnswer, thinkingMessageId);
+
+      if (tempConversationId) {
+        const searchResponse = await apiClient.searchCompetitor(
+          tempConversationId,
+          formattedInput
+        );
+
+        if (searchResponse?.code === 200) {
+          messageHandler.addSystemMessage(
+            "Agent starts working on find competitor list for you, it usually takes a minute or two, please hold on..."
+          );
+          setIsProcessingTask(true);
+        }
+      }
+    } else {
+      const answer = filterMessageTags(rawAnswer);
+      messageHandler.updateAgentMessage(answer, thinkingMessageId);
+    }
+  };
+
   // 添加缺失的方法
   const handleStartGenerationFromModal = async (data: any) => {
     try {
@@ -153,7 +258,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         startedTaskCountRef.current += data.hubPageIds.length;
         messageHandler.addSystemMessage('System is analyzing competitors and generating pages, please wait...');
         retryCountRef.current = 0;
-        setShouldConnectWS(true);
         setHubPageIds([]);
         setSelectedCompetitors([]);
         setUserInput('');
@@ -183,42 +287,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     }
     if (!formattedInput || isMessageSending) return;
 
-    if (currentStep === 0) {
-      if (!validateDomain(formattedInput)) {
-        console.error('Please enter a valid website domain, such as example.com or https://example.com');
-        setIsSubmitting(false);
-        return;
-      }
-    }
-
-    // --- 登录状态检查 ---
-    const isLoggedIn = localStorage.getItem('alternativelyIsLoggedIn') === 'true';
-    const token = localStorage.getItem('alternativelyAccessToken');
-    if (!isLoggedIn || !token) {
-      const showLoginEvent = new CustomEvent('showAlternativelyLoginModal');
-      window.dispatchEvent(showLoginEvent);
-      setIsProcessingTask(false);
-      return;
-    }
-
-    // --- 积分检查 ---
-    try {
-      const packageResponse = await apiClient.getCustomerPackage();
-      if (packageResponse?.code === 200 && packageResponse.data) {
-        const { pageGeneratorLimit, pageGeneratorUsage } = packageResponse.data;
-        const availableCredits = pageGeneratorLimit - pageGeneratorUsage;
-        if (availableCredits <= 0) {
-          console.warn('You have no credits left. Please purchase a package to continue using.');
-          setIsProcessingTask(false);
-          return;
-        }
-      }
-    } catch (creditError) {
-      console.error('Error checking user credit:', creditError);
-    } finally {
-      setIsSubmitting(false);
-    }
-
     // --- 添加用户消息并显示思考状态 ---
     messageHandler.addUserMessage(formattedInput);
     const thinkingMessageId = messageHandler.addAgentThinkingMessage();
@@ -228,21 +296,26 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     try {
       setShowSlogan(false);
 
-      // 直接生成conversationId
+      // 根据图片规则：用户发送第一条消息创建聊天室
       let tempConversationId = currentConversationId;
 
       if (!tempConversationId) {
         setLoading(true);
-        // 直接调用chatWithAI生成新的conversationId
+        // 用户发送第一条消息，API自动创建聊天室并返回WebSocket连接
         const chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, null);
 
-        if (chatResponse?.code !== 200 || !chatResponse?.data?.conversationId) {
+        // 检查响应格式 - 现在只返回WebSocket对象
+        if (chatResponse && 'websocket' in chatResponse) {
+          console.log('🔍 WebSocket模式，创建聊天成功');
+          // WebSocket模式，conversationId会通过WebSocket消息返回
+          // 暂时使用时间戳作为临时conversationId
+          tempConversationId = `temp-${Date.now()}`;
+        } else {
+          messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
           setIsMessageSending(false);
+          setLoading(false);
           return;
         }
-
-        // 获取并保存新的conversationId
-        tempConversationId = chatResponse.data.conversationId;
         setCurrentConversationId(tempConversationId);
 
         // 更新URL
@@ -258,33 +331,45 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         router.replace(`${targetPath}?conversationId=${tempConversationId}`);
       }
 
-      // 处理响应
-      const response = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
-      if (response?.code === 200 && response.data?.message?.answer) {
-        const rawAnswer = response.data.message.answer;
+      // 处理响应 - 只使用WebSocket
+      console.log('🔍 WebSocket状态检查:', {
+        wsConnected,
+        wsConnecting,
+        wsConnectionState,
+        wsError,
+        hasChatService: !!wsChatService,
+        conversationId: tempConversationId
+      });
 
-        if (rawAnswer.includes('[URL_GET]')) {
-          localStorage.setItem('currentProductUrl', formattedInput);
-          messageHandler.updateAgentMessage(rawAnswer, thinkingMessageId);
-
-          const searchResponse = await apiClient.searchCompetitor(
-            tempConversationId,
-            formattedInput
-          );
-
-          if (searchResponse?.code === 200) {
-            messageHandler.addSystemMessage(
-              "Agent starts working on find competitor list for you, it usually takes a minute or two, please hold on..."
-            );
-            setIsProcessingTask(true);
+      if (wsConnected && wsChatService) {
+        // 使用WebSocket发送消息
+        console.log('🔍 尝试通过WebSocket发送消息');
+        const success = wsSendMessage(formattedInput, thinkingMessageId);
+        if (success) {
+          console.log('🔍 通过WebSocket发送消息成功');
+        } else {
+          console.log('🔍 WebSocket发送失败');
+          messageHandler.updateAgentMessage('Failed to send message via WebSocket. Please try again.', thinkingMessageId);
           }
         } else {
-          const answer = filterMessageTags(rawAnswer);
-          messageHandler.updateAgentMessage(answer, thinkingMessageId);
+        // WebSocket未连接，尝试重新连接
+        console.log('🔍 WebSocket未连接，尝试重新连接');
+        try {
+          const response = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
+          if (response && 'websocket' in response) {
+            console.log('🔍 WebSocket连接成功，消息将通过WebSocket处理');
+          } else {
+            messageHandler.updateAgentMessage('Failed to establish WebSocket connection. Please try again.', thinkingMessageId);
+          }
+        } catch (error) {
+          console.error('WebSocket connection failed:', error);
+          messageHandler.updateAgentMessage('Failed to establish WebSocket connection. Please try again.', thinkingMessageId);
         }
       }
     } catch (error) {
       // 静默处理错误
+      console.error('Chat error:', error);
+      messageHandler.updateAgentMessage('An error occurred while processing your request. Please try again.', thinkingMessageId);
     } finally {
       setIsMessageSending(false);
       setIsSubmitting(false);
@@ -1348,72 +1433,16 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                   pointerEvents: 'none',
                                 }}
                               />
-                              <TextArea
-                                autoComplete="off"
-                                name="no-autofill"
-                                ref={inputRef}
-                                value={userInput}
-                                autoSize={{ minRows: 2, maxRows: 6 }}
-                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setUserInput(e.target.value)}
-                                disabled={loading || isMessageSending || isProcessingTask}
+                              <ChatInput
+                                userInput={userInput}
+                                setUserInput={setUserInput}
+                                onSendMessage={handleUserInput}
+                                loading={loading}
+                                isMessageSending={isMessageSending}
+                                isProcessingTask={isProcessingTask}
+                                disabled={false}
                                 placeholder="Please enter your website domain...."
-                                className={`bg-transparent border-none shadow-none text-base research-tool-input ${isHydrated ? themeStyles.inputArea?.text : 'text-white'} ${isHydrated ? themeStyles.inputArea?.placeholder : 'placeholder-gray-400'}`}
-                                style={{
-                                  minHeight: '48px',
-                                  background: 'transparent',
-                                  color: isHydrated ? (themeStyles.inputArea?.text === 'text-white' ? '#fff' : '#000') : '#fff',
-                                  boxShadow: 'none',
-                                  outline: 'none',
-                                  border: 'none',
-                                  paddingLeft: 0,
-                                  paddingRight: 0,
-                                  caretColor: isHydrated ? themeStyles.inputArea?.caretColor : '#fff',
-                                }}
-                                onPressEnter={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-                                  if (e.shiftKey) {
-                                    return;
-                                  }
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  if (userInput.trim() && !loading && !isMessageSending) {
-                                    handleUserInput(e);
-                                  }
-                                }}
                               />
-                              <div className="flex justify-end items-end mt-1">
-                                <button
-                                  type="button"
-                                  onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-                                    if (userInput.trim() && !loading && !isMessageSending) {
-                                      handleUserInput(e);
-                                    }
-                                  }}
-                                  disabled={loading || isMessageSending || !userInput.trim()}
-                                  className={`group relative flex items-center justify-center text-sm font-medium rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl backdrop-blur-sm overflow-hidden
-                                    ${(loading || isMessageSending || !userInput.trim())
-                                      ? 'bg-gray-700/60 text-gray-400 cursor-not-allowed opacity-70 border border-gray-600/40'
-                                      : 'bg-gradient-to-r from-[#AA450B] to-[#0D47A6] hover:from-[#BB560C] hover:to-[#1E5BBB] text-white cursor-pointer'
-                                    }`}
-                                  style={{
-                                    width: '40px',
-                                    height: '40px',
-                                    borderRadius: isHydrated ? (themeStyles.sendButton?.borderRadius || '10px') : '10px',
-                                    border: isHydrated ? (themeStyles.sendButton?.border || '1px solid #D9E3F0') : '1px solid #D9E3F0',
-                                    background: (loading || isMessageSending || !userInput.trim())
-                                      ? (isHydrated && currentTheme === 'dark' ? 'rgb(55 65 81 / 0.6)' : 'rgb(156 163 175)')
-                                      : (isHydrated ? themeStyles.sendButton?.background : 'linear-gradient(101deg, #336FFF 20.01%, #A671FC 56.73%, #F5894F 92.85%)'),
-                                    boxShadow: isHydrated ? (themeStyles.sendButton?.shadow || 'none') : 'none',
-                                    color: 'white'
-                                  }}
-                                >
-                                  <div className="absolute inset-0 bg-gradient-to-r from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                                  <img
-                                    src="/icons/send-button-icon.png"
-                                    alt="send"
-                                    className="w-5 h-5 relative z-10"
-                                  />
-                                </button>
-                              </div>
                             </div>
                           </div>
                         </div>
@@ -1533,19 +1562,27 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 ))}
                               </div>
                             )}
-                            <TextArea
-                              autoComplete="off"
-                              name="no-autofill"
-                              ref={inputRef}
-                              value={userInput}
-                              autoSize={{ minRows: 2, maxRows: 6 }}
-                              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
-                                setUserInput(e.target.value);
-                                if (e.target.value === '') {
+                            <ChatInput
+                              userInput={userInput}
+                              setUserInput={(value) => {
+                                setUserInput(value);
+                                if (value === '') {
                                   setSelectedCompetitors([]);
                                 }
                               }}
-                              disabled={loading || isMessageSending || isProcessingTask || selectedCompetitors.length > 0}
+                              onSendMessage={handleUserInput}
+                              onStartGeneration={handleStartGenerationFromModal}
+                              loading={loading}
+                              isMessageSending={isMessageSending}
+                              isProcessingTask={isProcessingTask}
+                              selectedCompetitors={selectedCompetitors.map(comp => ({
+                                hubPageId: comp.hubPageId,
+                                websiteId: currentWebsiteId,
+                                pageTitle: comp.pageTitle,
+                                url: ''
+                              }))}
+                              currentConversationId={currentConversationId}
+                              disabled={false}
                               placeholder={
                                 selectedCompetitors.length > 0
                                   ? "Just select cards to start the task"
@@ -1553,98 +1590,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                     ? "Please enter your website domain...."
                                     : "Agent is working, please keep waiting..."
                               }
-                              className={`bg-transparent border-none shadow-none text-base research-tool-input ${isHydrated ? themeStyles.inputArea?.text : 'text-white'} ${isHydrated ? themeStyles.inputArea?.placeholder : 'placeholder-gray-400'}`}
-                              style={{
-                                minHeight: '48px',
-                                background: 'transparent',
-                                color: isHydrated ? (themeStyles.inputArea?.text === 'text-white' ? '#fff' : '#000') : '#fff',
-                                boxShadow: 'none',
-                                outline: 'none',
-                                border: 'none',
-                                paddingLeft: 0,
-                                paddingRight: 0,
-                                caretColor: isHydrated ? themeStyles.inputArea?.caretColor : '#fff',
-                              }}
-                              onPressEnter={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-                                if (e.shiftKey) {
-                                  return;
-                                }
-                                e.preventDefault();
-                                e.stopPropagation();
-                                if (userInput.trim() && !loading && !isMessageSending && selectedCompetitors.length === 0) {
-                                  handleUserInput(e);
-                                }
-                              }}
                             />
-                            <div className="flex justify-between items-end mt-1">
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setShowBrandAssetsModal(true)}
-                                  className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-300 backdrop-blur-sm shadow-sm hover:shadow-md rounded-[10px] ${isHydrated ? themeStyles.setBrandColorButton?.background : 'bg-[rgba(34,42,65,1)]'} ${isHydrated ? themeStyles.setBrandColorButton?.text : 'text-white/80'}`}
-                                  style={{
-                                    height: '32px',
-                                    minWidth: '90px'
-                                  }}
-                                >
-                                  {/* SVG图标 */}
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 18 18" fill="none" className="transition-transform duration-300 group-hover:scale-110">
-                                    <path d="M17.0834 6.99904C16.2501 3.74902 13.5834 1.24902 10.3334 0.749019C7.91675 0.332352 5.50008 1.08235 3.66675 2.66569C1.75008 4.24902 0.666748 6.66571 0.666748 9.16571C0.666748 12.8324 3.00008 16.0824 6.41675 17.249C6.66675 17.3324 6.91675 17.4157 7.25008 17.4157C7.75008 17.4157 8.33341 17.249 8.75008 16.9157C9.41675 16.4157 9.83341 15.5824 9.83341 14.749C9.83341 13.5824 10.7501 12.8324 12.0001 12.8324H13.7501C15.7501 12.8324 17.3334 11.249 17.3334 9.24904C17.3334 8.41571 17.2501 7.74904 17.0834 6.99904ZM13.7501 11.0824H12.0001C9.83341 11.0824 8.16675 12.6657 8.16675 14.6657C8.16675 14.999 8.00008 15.249 7.75008 15.499C7.58341 15.5824 7.33341 15.749 6.91675 15.6657C4.16675 14.749 2.33341 12.0824 2.33341 9.16571C2.33341 7.16571 3.16675 5.24904 4.75008 3.91569C5.91675 2.91569 7.41675 2.33235 9.00008 2.33235C9.33341 2.33235 9.75008 2.33235 10.0834 2.41569C12.6667 2.83235 14.8334 4.83237 15.5001 7.41571C15.6667 7.99904 15.7501 8.58237 15.7501 9.16571C15.6667 10.249 14.8334 11.0824 13.7501 11.0824Z" fill="white" fillOpacity="0.8" />
-                                  </svg>
-                                  <span>Set Brand Color</span>
-                                  <svg
-                                    className={`w-3 h-3 ml-1 ${isRecoveryMode ? 'text-orange-400' : 'text-green-400'}`}
-                                    fill="currentColor"
-                                    viewBox="0 0 20 20"
-                                  >
-                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                                  </svg>
-                                </button>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={async (e: React.MouseEvent<HTMLButtonElement>) => {
-                                  if (userInput.trim() && !loading && !isMessageSending) {
-                                    handleUserInput(e);
-                                  }
-                                }}
-                                disabled={loading || isMessageSending || (selectedCompetitors.length === 0 && !userInput.trim())}
-                                className={`group relative flex items-center justify-center text-sm font-medium rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl backdrop-blur-sm overflow-hidden
-                                  ${(loading || isMessageSending || (selectedCompetitors.length === 0 && !userInput.trim()))
-                                    ? 'bg-gray-700/60 text-gray-400 cursor-not-allowed opacity-70 border border-gray-600/40'
-                                    : 'bg-gradient-to-r from-[#AA450B] to-[#0D47A6] hover:from-[#BB560C] hover:to-[#1E5BBB] text-white cursor-pointer'
-                                  }`}
-                                style={{
-                                  width: selectedCompetitors.length > 0 ? 'auto' : '40px',
-                                  height: '40px',
-                                  minWidth: selectedCompetitors.length > 0 ? '160px' : '40px',
-                                  padding: selectedCompetitors.length > 0 ? '0 16px' : '0',
-                                  borderRadius: isHydrated ? (themeStyles.sendButton?.borderRadius || '10px') : '10px',
-                                  border: isHydrated ? (themeStyles.sendButton?.border || '1px solid #D9E3F0') : '1px solid #D9E3F0',
-                                  background: (loading || isMessageSending || (selectedCompetitors.length === 0 && !userInput.trim()))
-                                    ? (isHydrated && currentTheme === 'dark' ? 'rgb(55 65 81 / 0.6)' : 'rgb(156 163 175)')
-                                    : (isHydrated ? themeStyles.sendButton?.background : 'linear-gradient(101deg, #336FFF 20.01%, #A671FC 56.73%, #F5894F 92.85%)'),
-                                  boxShadow: isHydrated ? (themeStyles.sendButton?.shadow || 'none') : 'none',
-                                  color: 'white'
-                                }}
-                              >
-                                {/* 背景装饰效果 */}
-                                <div className="absolute inset-0 bg-gradient-to-r from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-
-                                {/* 根据是否有选中的竞争对手显示不同内容 */}
-                                {selectedCompetitors.length > 0 ? (
-                                  <span className="relative z-10 font-medium whitespace-nowrap">
-                                    I've selected, start working
-                                  </span>
-                                ) : (
-                                  <img
-                                    src="/icons/send-button-icon.png"
-                                    alt="send"
-                                    className="w-5 h-5 relative z-10"
-                                  />
-                                )}
-                              </button>
-                            </div>
+                            
                           </div>
                         </div>
                       </div>
@@ -1700,11 +1647,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                         <div className="flex-1 overflow-y-auto overflow-y-hidden p-3 h-[calc(100vh-400px)]">
                           <div className="flex items-center justify-center h-full">
                             <div className="flex flex-col items-center text-gray-400 text-base">
-                              <img
-                                src={currentTheme === 'dark' ? "/images/default-no-pages.png" : "/images/default-no-pages-light.png"}
-                                alt="No pages"
-                                className="w-96 h-88 opacity-60"
-                              />
+                              <div className="w-96 h-88 opacity-60 flex items-center justify-center bg-gray-200 dark:bg-gray-800 rounded-lg">
+                                <svg className="w-24 h-24 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                              </div>
                               Your generated pages will appear here
                             </div>
                           </div>
@@ -1824,6 +1771,16 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           <p>Are you sure you want to delete this page? This action cannot be undone.</p>
         </Modal>
       )} */}
+
+      {/* WebSocket状态显示 - 只在客户端渲染 */}
+      {typeof window !== 'undefined' && currentConversationId && (
+        <WebSocketStatus conversationId={currentConversationId} />
+      )}
+
+      {/* WebSocket调试组件 - 只在开发环境显示 */}
+      {typeof window !== 'undefined' && process.env.NODE_ENV === 'development' && (
+        <WebSocketDebug conversationId={currentConversationId ?? undefined} />
+      )}
     </>
   );
 };
