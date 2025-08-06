@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import apiClient from '@/lib/api';
+import { getLocalStorageItem } from '@/lib/utils';
 
 type PageType = 'Alternative Page' | 'Best Page' | null;
 
@@ -59,12 +60,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // 监听主题变化并应用到 html 标签
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', isDarkMode);
+    if (typeof window !== 'undefined') {
+      document.documentElement.classList.toggle('dark', isDarkMode);
+    }
   }, [isDarkMode]);
 
   // 自动从localStorage恢复邮箱
   useEffect(() => {
-    const storedEmail = localStorage.getItem('alternativelyCustomerEmail');
+    const storedEmail = getLocalStorageItem('alternativelyCustomerEmail');
     if (storedEmail) setUserEmail(storedEmail);
   }, []);
 

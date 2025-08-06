@@ -7,7 +7,6 @@ const __dirname = dirname(__filename);
 
 const compat = new FlatCompat({
   baseDirectory: __dirname,
-  recommendedConfig: { ...require("@eslint/js").configs.recommended },
 });
 
 const eslintConfig = [
