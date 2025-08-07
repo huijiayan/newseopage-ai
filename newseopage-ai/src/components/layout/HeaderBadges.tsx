@@ -83,7 +83,7 @@ export const HeaderBadges: React.FC<HeaderBadgesProps> = ({
               <div className="flex items-center w-full gap-1.5">
                 <div className="w-5 h-5 flex-shrink-0 relative">
                   <img 
-                    src="/gold-medal.png" 
+                    src="/icons/gold-medal.png" 
                     alt="Gold Medal" 
                     className="w-full h-full object-contain"
                   />

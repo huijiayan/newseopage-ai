@@ -80,11 +80,25 @@ const vercelApiClient = axios.create({
   },
 });
 
+// 检测是否在Vercel环境中
+const isVercel = typeof window !== 'undefined' && (
+  window.location.hostname.includes('vercel.app') || 
+  window.location.hostname.includes('newseopage-ai.vercel.app')
+);
+
 // const API_URL = 'https://api.websitelm.com/v1';
 // const API_URL = 'http://api.zhuyuejoey.com/v1';
 const CHAT_API_URL = process.env.NEXT_PUBLIC_CHAT_API_URL || 'https://agents.zhuyuejoey.com'; // 聊天服务器地址
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.websitelm.com/v1'; // 主API服务器地址
+const API_URL = isVercel ? '/api/v1' : (process.env.NEXT_PUBLIC_API_URL || 'https://api.websitelm.com/v1'); // 主API服务器地址
 const CHAT_WS_URL = process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuejoey.com'; // WebSocket服务器地址
+
+// 调试信息
+if (typeof window !== 'undefined') {
+  console.log('🌐 API配置信息:');
+  console.log('- 当前域名:', window.location.hostname);
+  console.log('- 是否Vercel环境:', isVercel);
+  console.log('- API URL:', API_URL);
+}
 
 
 // 创建 axios 实例，更新配置

@@ -290,7 +290,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
             }}
           >
             <img 
-              src="/images/send-button-icon.png" 
+              src="/icons/send-button-icon.png" 
               alt="Send" 
               className="w-5 h-5" 
             />

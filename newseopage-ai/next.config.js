@@ -98,6 +98,16 @@ const nextConfig = {
       },
     ];
   },
+  
+  // API代理配置 - 解决CORS问题
+  async rewrites() {
+    return [
+      {
+        source: '/api/v1/:path*',
+        destination: 'https://api.websitelm.com/v1/:path*',
+      },
+    ];
+  },
 };
  
 module.exports = nextConfig; 
