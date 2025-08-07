@@ -12,6 +12,59 @@ const nextConfig = {
   // 压缩配置
   compress: true,
   
+  // Webpack配置 - 解决HMR问题
+  webpack: (config, { dev, isServer }) => {
+    if (dev && !isServer) {
+      // 配置HMR选项，避免cssinjs问题
+      config.resolve.alias = {
+        ...config.resolve.alias,
+      };
+      
+      // 添加HMR错误处理
+      config.plugins.push(
+        new (require('webpack')).DefinePlugin({
+          'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV),
+        })
+      );
+      
+      // 配置HMR选项
+      config.devServer = {
+        ...config.devServer,
+        hot: true,
+        liveReload: false,
+      };
+      
+      // 添加HMR忽略规则 - 更精确的匹配
+      config.module.rules.push({
+        test: /node_modules\/@ant-design\/cssinjs\/es\/hooks\/(useHMR|useGlobalCache|useCacheToken)\.js$/,
+        use: 'ignore-loader',
+      });
+      
+      // 添加HMR忽略规则 - extractStyle和index
+      config.module.rules.push({
+        test: /node_modules\/@ant-design\/cssinjs\/es\/(extractStyle|index)\.js$/,
+        use: 'ignore-loader',
+      });
+    }
+    
+    return config;
+  },
+  
+  // 实验性功能 - 禁用某些HMR功能
+  experimental: {
+    // 禁用某些可能导致HMR问题的功能
+    optimizePackageImports: ['antd'],
+    // 禁用HMR中的某些功能
+    turbo: {
+      rules: {
+        '*.css': {
+          loaders: ['css-loader'],
+          as: '*.css',
+        },
+      },
+    },
+  },
+  
   // 安全头
   async headers() {
     return [

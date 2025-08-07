@@ -18,7 +18,7 @@ import type {
 } from '@/types/research-tool';
 import { DEFAULT_TASK_STEPS, TASK_TIME_ESTIMATES } from '@/types/research-tool';
 import { MessageHandler } from '../utils/MessageHandler';
-import apiClient from '../utils/mock-api';
+import apiClient from '@/lib/api';
 
 export const useResearchTool = (conversationId: string | null = null, mode: string = 'normal') => {
   const router = useRouter();

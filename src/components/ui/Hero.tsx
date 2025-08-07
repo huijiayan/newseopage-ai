@@ -189,12 +189,45 @@ export const Hero: React.FC = () => {
           
           chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
           
-          // 检查响应格式 - 现在只返回WebSocket对象
+          // 检查响应格式 - chatWithAI接口已经生成conversationId
           if (chatResponse && 'websocket' in chatResponse) {
-            console.log('🔍 WebSocket模式，创建聊天成功');
-            // WebSocket模式，conversationId会通过WebSocket消息返回
-            // 暂时使用时间戳作为临时conversationId
-            conversationId = `temp-${Date.now()}`;
+            console.log('🔍 WebSocket模式，API已生成conversationId');
+            
+            // API响应中应该包含conversationId
+            if (chatResponse.conversationId) {
+              console.log('🔍 从API响应中获取到conversationId:', chatResponse.conversationId);
+              
+              // 更新状态并跳转
+              setCurrentConversationId(chatResponse.conversationId);
+              isFirstMessageSentForNewTaskRef.current = true;
+
+              // 根据当前路径决定跳转目标
+              const currentPath = window.location.pathname;
+              let targetPath = '/alternative'; // 默认跳转到 alternative
+
+              if (currentPath.includes('best')) {
+                targetPath = '/best';
+              } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+                targetPath = '/FAQ';
+              } else if (currentPath.includes('alternative')) {
+                targetPath = '/alternative';
+              }
+
+              // 跳转到聊天室页面，传递真实的conversationId
+              router.replace(`${targetPath}?conversationId=${chatResponse.conversationId}`);
+              
+              // 清空消息列表，因为要跳转到新页面
+              setMessages([]);
+              setShowSlogan(false);
+              
+              return;
+            } else {
+              console.error('🔍 API响应中未包含conversation_id');
+              messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
+              setIsMessageSending(false);
+              setLoading(false);
+              return;
+            }
           } else {
             messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
             setIsMessageSending(false);
@@ -208,34 +241,34 @@ export const Hero: React.FC = () => {
           return;
         }
         
-        // 获取并保存新的conversationId
-        tempConversationId = conversationId;
-        
-        // 更新状态并修改URL
-        setCurrentConversationId(tempConversationId);
-        isFirstMessageSentForNewTaskRef.current = true;
+        // 非WebSocket模式，使用API返回的conversationId
+        if (conversationId) {
+          // 更新状态并修改URL
+          setCurrentConversationId(conversationId);
+          isFirstMessageSentForNewTaskRef.current = true;
 
-        // 根据当前路径决定跳转目标
-        const currentPath = window.location.pathname;
-        let targetPath = '/alternative'; // 默认跳转到 alternative
+          // 根据当前路径决定跳转目标
+          const currentPath = window.location.pathname;
+          let targetPath = '/alternative'; // 默认跳转到 alternative
 
-        if (currentPath.includes('best')) {
-          targetPath = '/best';
-        } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
-          targetPath = '/FAQ';
-        } else if (currentPath.includes('alternative')) {
-          targetPath = '/alternative';
+          if (currentPath.includes('best')) {
+            targetPath = '/best';
+          } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+            targetPath = '/FAQ';
+          } else if (currentPath.includes('alternative')) {
+            targetPath = '/alternative';
+          }
+
+          // 跳转到聊天室页面，传递conversationId参数
+          router.replace(`${targetPath}?conversationId=${conversationId}`);
+          
+          // 清空消息列表，因为要跳转到新页面
+          setMessages([]);
+          setShowSlogan(false);
+          
+          // 跳转后不再处理后续逻辑，因为页面会重新加载
+          return;
         }
-
-        // 跳转到聊天室页面，传递conversationId参数
-        router.replace(`${targetPath}?conversationId=${tempConversationId}`);
-        
-        // 清空消息列表，因为要跳转到新页面
-        setMessages([]);
-        setShowSlogan(false);
-        
-        // 跳转后不再处理后续逻辑，因为页面会重新加载
-        return;
         
         // 如果响应中包含answer，处理它
         if (chatResponse && !('websocket' in chatResponse) && (chatResponse as any)?.message?.answer) {

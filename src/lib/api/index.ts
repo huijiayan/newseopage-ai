@@ -365,13 +365,7 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, onMe
       throw new Error('缺少访问令牌');
     }
     
-    // 使用正确的WebSocket URL格式
-    const wsUrl = `${CHAT_WS_URL}/ws/chat/${conversationId || 'new'}?token=${token}`;
-    console.log('🔍 WebSocket URL:', wsUrl);
-    
-    const websocket = new WebSocket(wsUrl);
-    
-    // 发送初始消息
+    // 先通过API获取conversationId，然后再建立WebSocket连接
     try {
       const initialResponse = await chatApiClient.post('/api/chat/new', {
         chatType,
@@ -379,33 +373,86 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, onMe
         conversationId,
       });
       console.log('🔍 WebSocket初始消息响应:', initialResponse.data);
+      
+      // 检查响应中是否包含conversation_id（API返回的字段名）
+      if (initialResponse.data && initialResponse.data.conversation_id) {
+        console.log('🔍 从API响应中获取到conversation_id:', initialResponse.data.conversation_id);
+        
+        // 使用API返回的conversation_id建立WebSocket连接
+        const realConversationId = initialResponse.data.conversation_id;
+        const wsUrl = `${CHAT_WS_URL}/ws/chat/${realConversationId}?token=${token}`;
+        console.log('🔍 ===== WebSocket连接信息 =====');
+        console.log('🔍 WebSocket URL:', wsUrl);
+        console.log('🔍 ConversationId:', realConversationId);
+        console.log('🔍 Token存在:', !!token);
+        console.log('🔍 =============================');
+        
+        const websocket = new WebSocket(wsUrl);
+        
+        // 监听 WebSocket 消息
+        websocket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log('🔍 ===== WebSocket消息接收 =====');
+            console.log('🔍 原始消息:', event.data);
+            console.log('🔍 解析后数据:', data);
+            console.log('🔍 消息类型:', typeof data);
+            console.log('🔍 消息键:', Object.keys(data));
+            if (data.conversationId) {
+              console.log('🔍 消息中的conversationId:', data.conversationId);
+            }
+            if (data.type) {
+              console.log('🔍 消息类型:', data.type);
+            }
+            
+            // 检查interrupt相关信息
+            if (data.interrupt !== undefined) {
+              console.log('🔍 ⚠️ 发现interrupt信息:', data.interrupt);
+            }
+            if (data.interrupted !== undefined) {
+              console.log('🔍 ⚠️ 发现interrupted信息:', data.interrupted);
+            }
+            if (data.canInterrupt !== undefined) {
+              console.log('🔍 ⚠️ 发现canInterrupt信息:', data.canInterrupt);
+            }
+            
+            // 检查消息内容中是否包含interrupt关键词
+            if (data.content && typeof data.content === 'string' && data.content.toLowerCase().includes('interrupt')) {
+              console.log('🔍 ⚠️ 消息内容包含interrupt关键词:', data.content);
+            }
+            
+            console.log('🔍 ===========================');
+            
+            if (onMessage) {
+              onMessage(data);
+            }
+          } catch (error) {
+            console.error('🔍 WebSocket消息解析失败:', error);
+            console.error('🔍 原始消息内容:', event.data);
+          }
+        };
+        
+        websocket.onerror = (error) => {
+          console.error('WebSocket connection error:', error);
+          websocket.close();
+        };
+        
+        websocket.onclose = (event) => {
+          console.log('WebSocket connection closed:', event.code, event.reason);
+        };
+        
+        return {
+          websocket,
+          conversationId: realConversationId // 使用API返回的字段名
+        };
+      } else {
+        console.error('🔍 API响应中未包含conversation_id');
+        throw new Error('API响应中未包含conversation_id');
+      }
     } catch (error) {
       console.error('🔍 WebSocket初始消息发送失败:', error);
+      throw error;
     }
-    
-    // 监听 WebSocket 消息
-    websocket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('🔍 WebSocket消息接收:', data);
-        if (onMessage) {
-          onMessage(data);
-        }
-      } catch (error) {
-        console.error('Failed to parse WebSocket message:', error);
-      }
-    };
-    
-    websocket.onerror = (error) => {
-      console.error('WebSocket connection error:', error);
-      websocket.close();
-    };
-    
-    websocket.onclose = (event) => {
-      console.log('WebSocket connection closed:', event.code, event.reason);
-    };
-    
-    return { websocket }; // 返回 WebSocket 实例以便外部控制
   } catch (error: any) {
     console.error('Failed to chat with AI:', error);
     throw error;

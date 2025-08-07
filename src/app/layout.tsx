@@ -4,6 +4,7 @@ import './globals.css';
 import { Layout } from '@/components/layout/Layout';
 import { AppProvider } from '@/context/AppContext';
 import { MessageProvider } from '@/components/ui/CustomMessage';
+import { AntdHMRFix } from '@/components/ui/AntdHMRFix';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -25,7 +26,10 @@ export default function RootLayout({
       <body className={inter.className}>
         <AppProvider>
           <MessageProvider>
-            <Layout>{children}</Layout>
+            <Layout>
+              {children}
+              <AntdHMRFix />
+            </Layout>
           </MessageProvider>
         </AppProvider>
       </body>

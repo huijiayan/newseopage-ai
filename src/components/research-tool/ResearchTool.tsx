@@ -1,7 +1,8 @@
 // 这是整个聊天页面的主要功能组件
 
 "use client";
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useMessage } from '@/components/ui/CustomMessage';
 import ChatInput from '@/components/ui/ChatInput';
 import { InfoCircleOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
@@ -16,10 +17,8 @@ import {
   isDomainListMessage,
   injectResearchToolStyles
 } from './utils/research-tool-utils';
-import apiClient from './utils/mock-api';
-import { useWebSocketChat } from '@/hooks/useWebSocketChat';
-import { WebSocketStatus } from './components/WebSocketStatus';
-import { WebSocketDebug } from './components/WebSocketDebug';
+import apiClient from '@/lib/api';
+import { WebSocketConnection } from './components/WebSocketConnection';
 
 // 这是整个聊天页面的主要功能组件
 export const ResearchTool: React.FC<ResearchToolProps> = ({
@@ -138,82 +137,239 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   } = useResearchTool(conversationId, mode);
 
   // WebSocket聊天功能
-  const {
-    isConnected: wsConnected,
-    isConnecting: wsConnecting,
-    connectionState: wsConnectionState,
-    error: wsError,
-    connect: wsConnect,
-    disconnect: wsDisconnect,
-    sendMessage: wsSendMessage,
-    reconnect: wsReconnect,
-    chatService: wsChatService
-  } = useWebSocketChat({
-    conversationId: currentConversationId ?? undefined,
-    autoConnect: true, // 启用自动连接
-    onMessage: (data) => {
-      console.log('🔍 收到WebSocket消息:', data);
-      // 处理WebSocket消息
-      if (data.type === 'message' && data.content) {
-        const thinkingMessageId = `thinking-${Date.now()}`;
-        messageHandler.updateAgentMessage(data.content, thinkingMessageId);
-      }
-    },
-    onError: (error) => {
-      console.error('WebSocket错误:', error);
-      messageHandler.addSystemMessage(`⚠️ WebSocket连接错误: ${error?.message || '未知错误'}`);
-    },
-    onClose: (event) => {
-      console.log('WebSocket连接已关闭:', event);
-      if (event.code !== 1000) {
-        messageHandler.addSystemMessage('⚠️ WebSocket连接已断开，正在尝试重连...');
-      }
-    },
-    onOpen: () => {
-      console.log('WebSocket连接已建立');
-      messageHandler.addSystemMessage('🔗 WebSocket连接已建立，可以开始实时聊天');
-    }
-  });
+  // WebSocket连接管理
+  const [wsConnected, setWsConnected] = useState(false);
+  const [wsConnecting, setWsConnecting] = useState(false);
+  const [wsConnectionState, setWsConnectionState] = useState('CLOSED');
+  const [wsError, setWsError] = useState<string | null>(null);
 
-  // 当conversationId变化时，尝试连接WebSocket并恢复历史记录
-  useEffect(() => {
-    if (currentConversationId && !wsConnected && !wsConnecting) {
-      console.log('🔍 尝试连接WebSocket，conversationId:', currentConversationId);
-      wsConnect(currentConversationId);
-      
-      // 根据图片规则：当用户继续聊天时，系统会恢复历史记录
-      if (mode === 'recover' || conversationId) {
-        console.log('🔍 恢复聊天历史记录');
-        loadChatHistory(currentConversationId);
-      }
+  const handleWebSocketMessage = (data: any) => {
+    console.log('🔍 ===== 收到WebSocket消息 =====');
+    console.log('🔍 消息数据:', data);
+    console.log('🔍 消息类型:', data.type);
+    console.log('🔍 消息内容长度:', data.content?.length || 0);
+    console.log('🔍 消息时间戳:', data.timestamp);
+    
+    // 处理WebSocket消息
+    if (data.type === 'message' && data.content) {
+      console.log('🔍 处理消息类型消息');
+      const thinkingMessageId = `thinking-${Date.now()}`;
+      messageHandler.updateAgentMessage(data.content, thinkingMessageId);
+      console.log('🔍 消息已更新到界面');
+    } else if (data.type === 'system') {
+      console.log('🔍 处理系统消息');
+      messageHandler.addSystemMessage(data.content || '系统消息');
+    } else if (data.type === 'error') {
+      console.log('🔍 处理错误消息');
+      messageHandler.addSystemMessage(`⚠️ ${data.content || '发生错误'}`);
+    } else {
+      console.log('🔍 未知消息类型，跳过处理');
     }
-  }, [currentConversationId, wsConnected, wsConnecting, wsConnect, mode, conversationId]);
+    
+    console.log('🔍 ===== WebSocket消息处理完成 =====');
+  };
+
+  const handleWebSocketError = (error: any) => {
+    console.error('🔍 ===== WebSocket连接错误 =====');
+    console.error('🔍 错误对象:', error);
+    console.error('🔍 错误消息:', error?.message);
+    console.error('🔍 错误类型:', typeof error);
+    console.error('🔍 错误堆栈:', error?.stack);
+    
+    const errorMessage = error?.message || '未知错误';
+    setWsError(errorMessage);
+    messageHandler.addSystemMessage(`⚠️ WebSocket连接错误: ${errorMessage}`);
+    
+    console.error('🔍 ===== WebSocket错误处理完成 =====');
+  };
+
+  const handleWebSocketClose = (event: CloseEvent) => {
+    console.log('🔍 ===== WebSocket连接已关闭 =====');
+    console.log('🔍 关闭事件:', event);
+    console.log('🔍 关闭代码:', event.code);
+    console.log('🔍 关闭原因:', event.reason);
+    console.log('🔍 是否正常关闭:', event.code === 1000);
+    
+    setWsConnected(false);
+    setWsConnectionState('CLOSED');
+    
+    if (event.code !== 1000) {
+      console.log('🔍 非正常关闭，显示警告消息');
+      messageHandler.addSystemMessage('⚠️ WebSocket连接已断开');
+    } else {
+      console.log('🔍 正常关闭，不显示警告');
+    }
+    
+    console.log('🔍 ===== WebSocket关闭处理完成 =====');
+  };
+
+  const handleWebSocketOpen = () => {
+    console.log('🔍 ===== WebSocket连接已建立 =====');
+    console.log('🔍 连接时间:', new Date().toISOString());
+    console.log('🔍 当前conversationId:', currentConversationId);
+    console.log('🔍 连接状态:', wsConnectionState);
+    
+    setWsConnected(true);
+    setWsConnectionState('OPEN');
+    setWsError(null);
+    
+    console.log('🔍 状态已更新');
+    messageHandler.addSystemMessage('🔗 WebSocket连接已建立，可以开始实时聊天');
+    
+    console.log('🔍 ===== WebSocket连接建立完成 =====');
+  };
+
+  // 自动检测URL参数并建立WebSocket连接
+  useEffect(() => {
+    try {
+      console.log('🔍 ===== 开始自动检测URL参数 =====');
+      console.log('🔍 当前URL:', typeof window !== 'undefined' ? window.location.href : 'SSR环境');
+      console.log('🔍 传入的conversationId:', conversationId);
+      console.log('🔍 传入的mode:', mode);
+      console.log('🔍 当前currentConversationId:', currentConversationId);
+      
+      // 1. 自动检测：URL中的conversationId参数
+      const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+      const urlConversationId = urlParams.get('conversationId');
+      console.log('🔍 URL中的conversationId参数:', urlConversationId);
+      
+      // 2. 自动设置：恢复模式和对话ID
+      let targetConversationId = conversationId || urlConversationId;
+      let shouldRecover = false;
+      
+      if (targetConversationId) {
+        console.log('🔍 检测到conversationId，准备进入恢复模式');
+        console.log('🔍 目标conversationId:', targetConversationId);
+        console.log('🔍 当前模式:', mode);
+        
+        // 如果URL中有conversationId或传入的mode是recover，则进入恢复模式
+        if (urlConversationId || mode === 'recover') {
+          shouldRecover = true;
+          console.log('🔍 设置为恢复模式');
+          setIsRecoveryMode(true);
+        }
+        
+        // 设置conversationId - 避免无限循环
+        if (targetConversationId !== currentConversationId) {
+          console.log('🔍 更新currentConversationId:', targetConversationId);
+          setCurrentConversationId(targetConversationId);
+        }
+      } else {
+        console.log('🔍 未检测到conversationId，保持正常模式');
+      }
+      
+      console.log('🔍 ===== URL参数检测完成 =====');
+    } catch (error: any) {
+      console.error('🔍 URL参数检测过程中发生错误:', error);
+      console.error('🔍 错误详情:', {
+        message: error?.message || '未知错误',
+        stack: error?.stack || '无堆栈信息'
+      });
+    }
+  }, [conversationId, mode]); // 移除currentConversationId依赖，避免无限循环
+
+  // 当conversationId变化时，自动获取聊天历史并建立WebSocket连接
+  useEffect(() => {
+    try {
+      if (currentConversationId) {
+        console.log('🔍 ===== 开始处理conversationId变化 =====');
+        console.log('🔍 conversationId已设置:', currentConversationId);
+        console.log('🔍 当前模式:', mode);
+        console.log('🔍 是否恢复模式:', isRecoveryMode);
+        
+        // 3. 自动获取：聊天历史数据
+        if (mode === 'recover' || conversationId || isRecoveryMode) {
+          console.log('🔍 开始恢复聊天历史记录');
+          loadChatHistory(currentConversationId);
+        }
+        
+        // 4. 自动连接：建立WebSocket连接
+        console.log('🔍 准备建立WebSocket连接');
+        console.log('🔍 WebSocket当前状态:', wsConnectionState);
+        console.log('🔍 WebSocket是否已连接:', wsConnected);
+        
+        if (!wsConnected && wsConnectionState === 'CLOSED') {
+          console.log('🔍 开始建立WebSocket连接...');
+          // 这里会触发WebSocket连接建立
+          // WebSocket连接会在组件渲染时自动建立
+        }
+        
+        console.log('🔍 ===== conversationId变化处理完成 =====');
+      }
+    } catch (error: any) {
+      console.error('🔍 conversationId变化处理过程中发生错误:', error);
+      console.error('🔍 错误详情:', {
+        message: error?.message || '未知错误',
+        stack: error?.stack || '无堆栈信息'
+      });
+    }
+  }, [currentConversationId, mode, conversationId, isRecoveryMode, wsConnected, wsConnectionState]);
 
   // 加载聊天历史记录
   const loadChatHistory = async (conversationId: string) => {
+    console.log('🔍 ===== 开始加载聊天历史记录 =====');
+    console.log('🔍 目标conversationId:', conversationId);
+    
     try {
+      console.log('🔍 调用API获取聊天历史...');
       const historyResponse = await apiClient.getAlternativeChatHistory(conversationId);
+      console.log('🔍 聊天历史API响应:', historyResponse);
+      
       if (historyResponse?.code === 200 && historyResponse.data) {
+        console.log('🔍 API调用成功，开始处理历史数据');
+        console.log('🔍 原始历史数据条数:', historyResponse.data.length);
+        
         // 按时间顺序显示所有消息
         const sortedMessages = historyResponse.data.sort((a: any, b: any) => 
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
         );
+        console.log('🔍 排序后历史数据条数:', sortedMessages.length);
         
         // 恢复消息到界面
-        sortedMessages.forEach((msg: any) => {
+        let userMessageCount = 0;
+        let agentMessageCount = 0;
+        
+        sortedMessages.forEach((msg: any, index: number) => {
+          console.log(`🔍 处理第${index + 1}条历史消息:`, {
+            source: msg.source,
+            content: msg.content?.substring(0, 50) + (msg.content?.length > 50 ? '...' : ''),
+            timestamp: msg.timestamp
+          });
+          
           if (msg.source === 'user') {
             messageHandler.addUserMessage(msg.content);
+            userMessageCount++;
+            console.log('🔍 已添加用户消息');
           } else if (msg.source === 'agent') {
             messageHandler.addAgentThinkingMessage();
             messageHandler.updateAgentMessage(msg.content, `thinking-${Date.now()}`);
+            agentMessageCount++;
+            console.log('🔍 已添加AI消息');
           }
         });
         
-        console.log('🔍 聊天历史记录已恢复');
+        console.log('🔍 聊天历史记录恢复完成');
+        console.log('🔍 恢复的用户消息数:', userMessageCount);
+        console.log('🔍 恢复的AI消息数:', agentMessageCount);
+        console.log('🔍 总恢复消息数:', userMessageCount + agentMessageCount);
+      } else {
+        console.log('🔍 API响应异常:', historyResponse);
+        if (historyResponse?.code !== 200) {
+          console.log('🔍 API返回错误码:', historyResponse?.code);
+        }
+        if (!historyResponse?.data) {
+          console.log('🔍 API返回数据为空');
+        }
       }
-    } catch (error) {
-      console.error('加载聊天历史记录失败:', error);
+    } catch (error: any) {
+      console.error('🔍 加载聊天历史记录失败:', error);
+      console.error('🔍 错误详情:', {
+        message: error?.message || '未知错误',
+        stack: error?.stack || '无堆栈信息'
+      });
     }
+    
+    console.log('🔍 ===== 聊天历史记录加载完成 =====');
   };
 
   // 处理聊天响应的辅助函数
@@ -222,22 +378,162 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       localStorage.setItem('currentProductUrl', formattedInput);
       messageHandler.updateAgentMessage(rawAnswer, thinkingMessageId);
 
+      // 当AI需要时，进行竞争对手搜索和websiteId匹配
+      console.log('🔍 AI需要搜索竞争对手，开始处理...');
+      
+      // 1. 搜索竞争对手
       if (tempConversationId) {
-        const searchResponse = await apiClient.searchCompetitor(
-          tempConversationId,
-          formattedInput
-        );
-
-        if (searchResponse?.code === 200) {
-          messageHandler.addSystemMessage(
-            "Agent starts working on find competitor list for you, it usually takes a minute or two, please hold on..."
+        try {
+          const searchResponse = await apiClient.searchCompetitor(
+            tempConversationId,
+            formattedInput
           );
-          setIsProcessingTask(true);
+          console.log('🔍 竞争对手搜索响应:', searchResponse);
+
+          if (searchResponse?.code === 200) {
+            messageHandler.addSystemMessage(
+              "Agent starts working on find competitor list for you, it usually takes a minute or two, please hold on..."
+            );
+            setIsProcessingTask(true);
+          }
+        } catch (error) {
+          console.error('🔍 竞争对手搜索失败:', error);
         }
+      }
+      
+      // 2. 查找websiteId并设置currentWebsiteId
+      try {
+        const websiteId = await findWebsiteIdByDomain(formattedInput);
+        if (websiteId) {
+          console.log('🔍 找到websiteId，设置currentWebsiteId:', websiteId);
+          setCurrentWebsiteId(websiteId);
+        }
+      } catch (error) {
+        console.error('🔍 websiteId查找失败:', error);
       }
     } else {
       const answer = filterMessageTags(rawAnswer);
       messageHandler.updateAgentMessage(answer, thinkingMessageId);
+    }
+  };
+
+  // 根据域名查找websiteId的函数
+  const findWebsiteIdByDomain = async (domain: string): Promise<string | null> => {
+    try {
+      console.log('🔍 根据域名查找websiteId:', domain);
+      
+      // 获取网站列表进行匹配
+      const websiteListResponse = await apiClient.getAlternativeWebsiteList();
+      
+      if (websiteListResponse?.code === 200 && websiteListResponse.data) {
+        const websites = websiteListResponse.data;
+        console.log('🔍 获取到网站列表:', websites.length, '个网站');
+        
+        // 使用includes进行模糊匹配
+        const matchedWebsite = findWebsiteByDomain(domain, websites);
+        
+        if (matchedWebsite) {
+          console.log('🔍 找到匹配的网站:', matchedWebsite);
+          return matchedWebsite.websiteId || matchedWebsite.id;
+        } else {
+          console.log('🔍 未找到匹配的网站，使用回退机制');
+          // 回退机制：使用第一个网站或生成新的websiteId
+          if (websites.length > 0) {
+            const fallbackWebsite = websites[0];
+            console.log('🔍 使用回退网站:', fallbackWebsite);
+            return fallbackWebsite.websiteId || fallbackWebsite.id;
+          } else {
+            console.log('🔍 网站列表为空，尝试生成新的websiteId');
+            // 尝试生成新的websiteId
+            try {
+              const generateResponse = await apiClient.generateWebsiteId();
+              if (generateResponse?.code === 200 && generateResponse.data?.websiteId) {
+                console.log('🔍 生成新的websiteId:', generateResponse.data.websiteId);
+                return generateResponse.data.websiteId;
+              }
+            } catch (error) {
+              console.error('🔍 生成websiteId失败:', error);
+            }
+          }
+        }
+      } else {
+        console.error('🔍 获取网站列表失败:', websiteListResponse);
+      }
+      
+      return null;
+    } catch (error: any) {
+      console.error('🔍 查找websiteId失败:', error);
+      return null;
+    }
+  };
+
+  // 使用includes进行模糊匹配
+  const findWebsiteByDomain = (domain: string, websites: any[]): any | null => {
+    const cleanDomain = domain.toLowerCase().trim();
+    
+    // 精确匹配
+    for (const website of websites) {
+      const websiteUrl = website.websiteURL || website.website || '';
+      const websiteDomain = extractDomainFromUrl(websiteUrl);
+      
+      if (websiteDomain === cleanDomain) {
+        console.log('🔍 精确匹配成功:', websiteDomain);
+        return website;
+      }
+    }
+    
+    // 包含匹配
+    for (const website of websites) {
+      const websiteUrl = website.websiteURL || website.website || '';
+      const websiteDomain = extractDomainFromUrl(websiteUrl);
+      
+      if (websiteDomain.includes(cleanDomain) || cleanDomain.includes(websiteDomain)) {
+        console.log('🔍 包含匹配成功:', websiteDomain, '包含', cleanDomain);
+        return website;
+      }
+    }
+    
+    // 部分匹配（域名的主要部分）
+    const domainParts = cleanDomain.split('.');
+    if (domainParts.length >= 2) {
+      const mainDomain = domainParts.slice(-2).join('.');
+      
+      for (const website of websites) {
+        const websiteUrl = website.websiteURL || website.website || '';
+        const websiteDomain = extractDomainFromUrl(websiteUrl);
+        const websiteDomainParts = websiteDomain.split('.');
+        
+        if (websiteDomainParts.length >= 2) {
+          const websiteMainDomain = websiteDomainParts.slice(-2).join('.');
+          
+          if (mainDomain === websiteMainDomain) {
+            console.log('🔍 主域名匹配成功:', mainDomain);
+            return website;
+          }
+        }
+      }
+    }
+    
+    console.log('🔍 未找到匹配的网站');
+    return null;
+  };
+
+  // 从URL中提取域名
+  const extractDomainFromUrl = (url: string): string => {
+    if (!url) return '';
+    
+    try {
+      // 确保URL有协议
+      let fullUrl = url;
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        fullUrl = 'https://' + url;
+      }
+      
+      const urlObj = new URL(fullUrl);
+      return urlObj.hostname.toLowerCase();
+    } catch (error) {
+      console.error('🔍 URL解析失败:', url, error);
+      return url.toLowerCase();
     }
   };
 
@@ -296,6 +592,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     try {
       setShowSlogan(false);
 
+      // 处理域名输入 - 存储到localStorage
+      const processedDomain = formattedInput;
+      localStorage.setItem('currentDomain', processedDomain);
+      localStorage.setItem('currentProductUrl', formattedInput);
+      console.log('🔍 域名已存储:', processedDomain);
+
       // 根据图片规则：用户发送第一条消息创建聊天室
       let tempConversationId = currentConversationId;
 
@@ -304,31 +606,63 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         // 用户发送第一条消息，API自动创建聊天室并返回WebSocket连接
         const chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, null);
 
-        // 检查响应格式 - 现在只返回WebSocket对象
+        // 检查响应格式 - 可能返回WebSocket对象或包含conversationId的对象
         if (chatResponse && 'websocket' in chatResponse) {
-          console.log('🔍 WebSocket模式，创建聊天成功');
-          // WebSocket模式，conversationId会通过WebSocket消息返回
-          // 暂时使用时间戳作为临时conversationId
-          tempConversationId = `temp-${Date.now()}`;
+          console.log('🔍 WebSocket模式，检查API响应中的conversationId');
+          
+          // 检查API响应中是否包含conversationId
+          if (chatResponse.conversationId) {
+            console.log('🔍 从API响应中获取到conversationId:', chatResponse.conversationId);
+            tempConversationId = chatResponse.conversationId;
+            setCurrentConversationId(tempConversationId);
+
+            // 实时更新URL
+            const currentPath = window.location.pathname;
+            let targetPath = '/alternative';
+            if (currentPath.includes('best')) {
+              targetPath = '/best';
+            } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+              targetPath = '/FAQ';
+            } else if (currentPath.includes('alternative')) {
+              targetPath = '/alternative';
+            }
+            router.replace(`${targetPath}?conversationId=${tempConversationId}`);
+          } else {
+            console.log('🔍 WebSocket模式，等待后端返回conversationId');
+            // 等待WebSocket消息中的conversationId
+            const websocket = chatResponse.websocket;
+            websocket.onmessage = (event) => {
+              try {
+                const data = JSON.parse(event.data);
+                console.log('🔍 收到WebSocket消息:', data);
+                
+                if (data.conversationId) {
+                  console.log('🔍 收到后端返回的conversationId:', data.conversationId);
+                  setCurrentConversationId(data.conversationId);
+                  
+                  // 实时更新URL
+                  const currentPath = window.location.pathname;
+                  let targetPath = '/alternative';
+                  if (currentPath.includes('best')) {
+                    targetPath = '/best';
+                  } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+                    targetPath = '/FAQ';
+                  } else if (currentPath.includes('alternative')) {
+                    targetPath = '/alternative';
+                  }
+                  router.replace(`${targetPath}?conversationId=${data.conversationId}`);
+                }
+              } catch (error) {
+                console.error('🔍 解析WebSocket消息失败:', error);
+              }
+            };
+          }
         } else {
           messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
           setIsMessageSending(false);
           setLoading(false);
           return;
         }
-        setCurrentConversationId(tempConversationId);
-
-        // 更新URL
-        const currentPath = window.location.pathname;
-        let targetPath = '/alternative';
-        if (currentPath.includes('best')) {
-          targetPath = '/best';
-        } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
-          targetPath = '/FAQ';
-        } else if (currentPath.includes('alternative')) {
-          targetPath = '/alternative';
-        }
-        router.replace(`${targetPath}?conversationId=${tempConversationId}`);
       }
 
       // 处理响应 - 只使用WebSocket
@@ -337,34 +671,22 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         wsConnecting,
         wsConnectionState,
         wsError,
-        hasChatService: !!wsChatService,
+        hasChatService: false,
         conversationId: tempConversationId
       });
 
-      if (wsConnected && wsChatService) {
-        // 使用WebSocket发送消息
-        console.log('🔍 尝试通过WebSocket发送消息');
-        const success = wsSendMessage(formattedInput, thinkingMessageId);
-        if (success) {
-          console.log('🔍 通过WebSocket发送消息成功');
+      // 使用API发送消息
+      console.log('🔍 尝试通过API发送消息');
+      try {
+        const response = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
+        if (response && 'websocket' in response) {
+          console.log('🔍 WebSocket连接成功，消息将通过WebSocket处理');
         } else {
-          console.log('🔍 WebSocket发送失败');
-          messageHandler.updateAgentMessage('Failed to send message via WebSocket. Please try again.', thinkingMessageId);
-          }
-        } else {
-        // WebSocket未连接，尝试重新连接
-        console.log('🔍 WebSocket未连接，尝试重新连接');
-        try {
-          const response = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
-          if (response && 'websocket' in response) {
-            console.log('🔍 WebSocket连接成功，消息将通过WebSocket处理');
-          } else {
-            messageHandler.updateAgentMessage('Failed to establish WebSocket connection. Please try again.', thinkingMessageId);
-          }
-        } catch (error) {
-          console.error('WebSocket connection failed:', error);
           messageHandler.updateAgentMessage('Failed to establish WebSocket connection. Please try again.', thinkingMessageId);
         }
+      } catch (error) {
+        console.error('WebSocket connection failed:', error);
+        messageHandler.updateAgentMessage('Failed to establish WebSocket connection. Please try again.', thinkingMessageId);
       }
     } catch (error) {
       // 静默处理错误
@@ -1442,6 +1764,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 isProcessingTask={isProcessingTask}
                                 disabled={false}
                                 placeholder="Please enter your website domain...."
+                                chatType={getPageMode()}
+                                onDomainProcessed={(domain, websiteId) => {
+                                  console.log('🔍 域名已处理:', { domain, websiteId });
+                                  // 这里可以添加额外的域名处理逻辑
+                                }}
                               />
                             </div>
                           </div>
@@ -1590,6 +1917,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                     ? "Please enter your website domain...."
                                     : "Agent is working, please keep waiting..."
                               }
+                              chatType={getPageMode()}
+                              onDomainProcessed={(domain, websiteId) => {
+                                console.log('🔍 域名已处理:', { domain, websiteId });
+                                // 这里可以添加额外的域名处理逻辑
+                              }}
                             />
                             
                           </div>
@@ -1772,14 +2104,16 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         </Modal>
       )} */}
 
-      {/* WebSocket状态显示 - 只在客户端渲染 */}
+      {/* WebSocket连接组件 - 只在客户端渲染 */}
       {typeof window !== 'undefined' && currentConversationId && (
-        <WebSocketStatus conversationId={currentConversationId} />
-      )}
-
-      {/* WebSocket调试组件 - 只在开发环境显示 */}
-      {typeof window !== 'undefined' && process.env.NODE_ENV === 'development' && (
-        <WebSocketDebug conversationId={currentConversationId ?? undefined} />
+        <WebSocketConnection 
+          conversationId={currentConversationId}
+          onMessage={handleWebSocketMessage}
+          onError={handleWebSocketError}
+          onClose={handleWebSocketClose}
+          onOpen={handleWebSocketOpen}
+          autoConnect={true}
+        />
       )}
     </>
   );

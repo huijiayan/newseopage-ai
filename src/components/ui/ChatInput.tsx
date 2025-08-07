@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Input } from 'antd';
 import { useTheme } from '../../utils/theme-config.js';
+import { validateDomain, extractDomain } from '../research-tool/utils/research-tool-utils';
 
 interface Competitor {
   hubPageId: string;
@@ -27,6 +28,8 @@ interface ChatInputProps {
   disabled?: boolean;
   placeholder?: string;
   className?: string;
+  chatType?: 'alternative' | 'best' | 'faq';
+  onDomainProcessed?: (domain: string, websiteId?: string) => void;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -42,6 +45,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   disabled = false,
   placeholder,
   className = '',
+  chatType = 'alternative',
+  onDomainProcessed,
 }) => {
   const { currentTheme, getThemeConfig, isHydrated } = useTheme();
   const inputRef = useRef<any>(null);
@@ -64,6 +69,31 @@ const ChatInput: React.FC<ChatInputProps> = ({
     }
     
     return "Please enter your website domain....";
+  };
+
+  // 处理域名输入
+  const processDomainInput = (input: string): string => {
+    let domain = input.trim();
+    
+    // 验证域名格式
+    if (!validateDomain(domain)) {
+      return input; // 返回原始输入，让用户看到错误
+    }
+    
+    // 提取域名
+    const extractedDomain = extractDomain(domain);
+    
+    // 存储到localStorage
+    localStorage.setItem('currentDomain', extractedDomain);
+    localStorage.setItem('currentProductUrl', domain);
+    
+    console.log('🔍 域名已处理并存储:', {
+      original: domain,
+      extracted: extractedDomain,
+      chatType
+    });
+    
+    return extractedDomain;
   };
 
   // 处理输入变化
@@ -91,6 +121,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
   // 处理发送按钮点击
   const handleSendClick = (e: React.MouseEvent) => {
     if (userInput.trim() && !loading && !isMessageSending && selectedCompetitors.length === 0) {
+      // 处理域名输入
+      const processedInput = processDomainInput(userInput);
+      
+      // 如果有域名处理回调，调用它
+      if (onDomainProcessed) {
+        onDomainProcessed(processedInput);
+      }
+      
       onSendMessage(e);
     } else if (selectedCompetitors.length > 0 && onStartGeneration) {
       onStartGeneration({

@@ -2,7 +2,7 @@
 // 提供React组件中WebSocket聊天功能的状态管理和方法
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WebSocketChatService, connectWebSocketChat, ChatMessage } from '@/lib/api/websocket-chat';
+import { WebSocketChatV2, connectWebSocketChatV2, ChatMessage } from '@/lib/api/websocket-chat-v2';
 
 export interface UseWebSocketChatOptions {
   conversationId?: string;
@@ -27,7 +27,7 @@ export interface UseWebSocketChatReturn {
   reconnect: () => Promise<void>;
   
   // 服务实例
-  chatService: WebSocketChatService | null;
+  chatService: WebSocketChatV2 | null;
 }
 
 export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebSocketChatReturn => {
@@ -49,7 +49,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
   const [isClient, setIsClient] = useState(false);
 
   // Refs
-  const chatServiceRef = useRef<WebSocketChatService | null>(null);
+  const chatServiceRef = useRef<WebSocketChatV2 | null>(null);
   const isMountedRef = useRef(true);
 
   // 确保只在客户端运行
@@ -88,20 +88,20 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       setIsConnecting(true);
       setConnectionState('CONNECTING');
 
-      const service = await connectWebSocketChat(
+      const service = await connectWebSocketChatV2(
         targetConversationId,
-        (data) => {
+        (data: any) => {
           if (isMountedRef.current) {
             onMessage?.(data);
           }
         },
-        (error) => {
+        (error: any) => {
           if (isMountedRef.current) {
             setError(error?.message || '连接错误');
             onError?.(error);
           }
         },
-        (event) => {
+        (event: CloseEvent) => {
           if (isMountedRef.current) {
             setIsConnected(false);
             setConnectionState('CLOSED');
