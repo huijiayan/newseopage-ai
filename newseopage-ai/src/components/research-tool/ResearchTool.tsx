@@ -5,20 +5,41 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMessage } from '@/components/ui/CustomMessage';
 import ChatInput from '@/components/ui/ChatInput';
-import { InfoCircleOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
+// 使用自定义图标替代 Ant Design 图标，避免 CSS-in-JS 冲突
+const InfoCircleIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm0 14c-3.3 0-6-2.7-6-6s2.7-6 6-6 6 2.7 6 6-2.7 6-6 6z"/>
+    <path d="M7 7h2v5H7z"/>
+    <circle cx="8" cy="4" r="1"/>
+  </svg>
+);
+
+const UpIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M8 2L2 8h3v6h6V8h3L8 2z"/>
+  </svg>
+);
+
+const DownIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M8 14L2 8h3V2h6v6h3L8 14z"/>
+  </svg>
+);
 import type { ResearchToolProps } from '@/types/research-tool';
 import { useResearchTool } from './hooks/useResearchTool';
 import { useTheme } from './hooks/useTheme';
 import { TaskStatusBar } from './components/TaskStatusBar';
+import { CompetitorSearchStatusBar } from './components/CompetitorSearchStatusBar';
 import {
   filterMessageTags,
   linkifyDomains,
   isJsonArrayMessage,
   isDomainListMessage,
-  injectResearchToolStyles
+  injectResearchToolStyles,
+  validateDomain
 } from './utils/research-tool-utils';
 import apiClient from '@/lib/api';
-import { WebSocketConnection } from './components/WebSocketConnection';
+
 
 // 这是整个聊天页面的主要功能组件
 export const ResearchTool: React.FC<ResearchToolProps> = ({
@@ -47,6 +68,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const [editingPage, setEditingPage] = React.useState<any>(null);
   const [currentWebsiteId, setCurrentWebsiteId] = React.useState<string>('');
   const [hubPageIds, setHubPageIds] = React.useState<string[]>([]);
+  const [sitemapStatus, setSitemapStatus] = React.useState<any>(null);
+  const [competitorSearchStatus, setCompetitorSearchStatus] = React.useState<any>(null);
+  const [competitorSearchStatusBarExpanded, setCompetitorSearchStatusBarExpanded] = React.useState(false);
 
   const [startedTaskCountRef] = React.useState(React.useRef(0));
   const [retryCountRef] = React.useState(React.useRef(0));
@@ -144,79 +168,145 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const [wsError, setWsError] = useState<string | null>(null);
 
   const handleWebSocketMessage = (data: any) => {
-    console.log('🔍 ===== 收到WebSocket消息 =====');
-    console.log('🔍 消息数据:', data);
-    console.log('🔍 消息类型:', data.type);
-    console.log('🔍 消息内容长度:', data.content?.length || 0);
-    console.log('🔍 消息时间戳:', data.timestamp);
+    console.log('🔍 WebSocket消息处理函数被调用:', data);
     
-    // 处理WebSocket消息
-    if (data.type === 'message' && data.content) {
-      console.log('🔍 处理消息类型消息');
-      const thinkingMessageId = `thinking-${Date.now()}`;
-      messageHandler.updateAgentMessage(data.content, thinkingMessageId);
-      console.log('🔍 消息已更新到界面');
-    } else if (data.type === 'system') {
-      console.log('🔍 处理系统消息');
-      messageHandler.addSystemMessage(data.content || '系统消息');
-    } else if (data.type === 'error') {
-      console.log('🔍 处理错误消息');
-      messageHandler.addSystemMessage(`⚠️ ${data.content || '发生错误'}`);
-    } else {
-      console.log('🔍 未知消息类型，跳过处理');
+    // 使用增强的消息处理器处理WebSocket消息
+    messageHandler.handleWebSocketMessage(data);
+    
+    // 检查AI响应是否包含[URL_GET]标记
+    if (data.type === 'message' && data.content && data.content.includes('[URL_GET]')) {
+      console.log('🔍 检测到[URL_GET]标记，开始竞品搜索流程');
+      
+      // 获取存储的formattedInput
+      const storedFormattedInput = localStorage.getItem('currentProductUrl');
+      if (storedFormattedInput) {
+        console.log('🔍 从localStorage获取formattedInput:', storedFormattedInput);
+        
+        // 调用竞品搜索API
+        handleCompetitorSearch(storedFormattedInput);
+      } else {
+        console.error('🔍 未找到存储的formattedInput');
+      }
     }
     
-    console.log('🔍 ===== WebSocket消息处理完成 =====');
+    // 如果是sitemap状态更新，设置状态
+    if (data.type === 'sitemap_status') {
+      setSitemapStatus(data);
+    }
+    
+    // 如果是竞品搜索状态更新，设置状态
+    if (data.type === 'competitor_search') {
+      setCompetitorSearchStatus(data);
+    }
+  };
+
+  // 获取竞品分析结果
+  const getCompetitorAnalysisResults = async (websiteId: string) => {
+    try {
+      console.log('🔍 ===== 竞品分析结果函数被调用 =====');
+      console.log('🔍 开始获取竞品分析结果，websiteId:', websiteId);
+      
+      // 1. 首先获取网站地图（包含竞品信息）
+      const sitemapData = await apiClient.getWebsiteSitemap(websiteId);
+      console.log('🔍 网站地图数据:', sitemapData);
+      
+      // 2. 获取竞品来源信息
+      const sourcesData = await apiClient.getAlternativeSources(websiteId);
+      console.log('🔍 竞品来源:', sourcesData);
+      
+      // 3. 获取竞品分析详情
+      const detailData = await apiClient.getAlternativeDetail(websiteId);
+      console.log('🔍 竞品分析详情:', detailData);
+      
+      // 4. 最后获取竞品分析结果
+      const resultData = await apiClient.getAlternativeResult(websiteId);
+      console.log('🔍 竞品分析结果:', resultData);
+      
+      // 5. 打印所有后端数据汇总
+      console.log('🔍 ===== 竞品分析完整数据汇总 =====');
+      console.log('🔍 WebsiteId:', websiteId);
+      console.log('🔍 网站地图数据:', sitemapData);
+      console.log('🔍 竞品来源数据:', sourcesData);
+      console.log('🔍 竞品分析详情:', detailData);
+      console.log('🔍 竞品分析结果:', resultData);
+      console.log('🔍 ===== 数据汇总完成 =====');
+      
+    } catch (error) {
+      console.error('🔍 获取竞品分析结果失败:', error);
+    }
+  };
+
+  // 处理竞品搜索
+  const handleCompetitorSearch = async (formattedInput: string) => {
+    console.log('🔍 ===== 竞品搜索函数被调用 =====');
+    console.log('🔍 功能: 开始搜索竞争对手');
+    console.log('🔍 参数: formattedInput =', formattedInput);
+    console.log('🔍 当前conversationId:', currentConversationId);
+    
+    try {
+      const competitorSearchResponse = await apiClient.searchCompetitor(currentConversationId, formattedInput);
+      
+      // 检查任务状态 (sitemapStatus)
+      if (competitorSearchResponse?.code === 200) {
+        console.log('🔍 竞品搜索成功，开始检查sitemap状态');
+        
+        // 如果有websiteId，检查sitemap状态
+        if (competitorSearchResponse.data?.websiteId) {
+          const websiteId = competitorSearchResponse.data.websiteId;
+          console.log('🔍 搜索完成之后，还要检查sitemapstatus网站地图的处理');
+          console.log('🔍 这些数据通过实时聊天将后端的数据推到前端');
+          
+          // 检查sitemap状态
+          try {
+            const sitemapResponse = await apiClient.getWebsiteSitemap(websiteId);
+            console.log('🔍 sitemap状态响应:', sitemapResponse);
+            
+            if (sitemapResponse?.code === 200) {
+              setSitemapStatus(sitemapResponse.data);
+              messageHandler.addSystemMessage('🔄 网站地图处理中...');
+              
+              // 获取完整的竞品分析结果
+              await getCompetitorAnalysisResults(websiteId);
+            }
+          } catch (sitemapError) {
+            console.error('🔍 检查sitemap状态失败:', sitemapError);
+          }
+        }
+      } else if (competitorSearchResponse?.code === 1075) {
+        messageHandler.addSystemMessage('⚠️ There is a task in progress. Please select from the left chat list');
+      } else if (competitorSearchResponse?.code === 1058) {
+        messageHandler.addSystemMessage('⚠️ Encountered a network error. Please try again.');
+      } else if (competitorSearchResponse?.code === 13002) {
+        messageHandler.addSystemMessage('⚠️ Please subscribe before starting a task.');
+      } else {
+        messageHandler.addSystemMessage('⚠️ 竞品搜索失败');
+      }
+    } catch (competitorError) {
+      console.error('🔍 竞品搜索失败:', competitorError);
+      messageHandler.addSystemMessage('⚠️ 竞品搜索失败');
+    }
   };
 
   const handleWebSocketError = (error: any) => {
-    console.error('🔍 ===== WebSocket连接错误 =====');
-    console.error('🔍 错误对象:', error);
-    console.error('🔍 错误消息:', error?.message);
-    console.error('🔍 错误类型:', typeof error);
-    console.error('🔍 错误堆栈:', error?.stack);
-    
     const errorMessage = error?.message || '未知错误';
     setWsError(errorMessage);
     messageHandler.addSystemMessage(`⚠️ WebSocket连接错误: ${errorMessage}`);
-    
-    console.error('🔍 ===== WebSocket错误处理完成 =====');
   };
 
   const handleWebSocketClose = (event: CloseEvent) => {
-    console.log('🔍 ===== WebSocket连接已关闭 =====');
-    console.log('🔍 关闭事件:', event);
-    console.log('🔍 关闭代码:', event.code);
-    console.log('🔍 关闭原因:', event.reason);
-    console.log('🔍 是否正常关闭:', event.code === 1000);
-    
     setWsConnected(false);
     setWsConnectionState('CLOSED');
     
     if (event.code !== 1000) {
-      console.log('🔍 非正常关闭，显示警告消息');
       messageHandler.addSystemMessage('⚠️ WebSocket连接已断开');
-    } else {
-      console.log('🔍 正常关闭，不显示警告');
     }
-    
-    console.log('🔍 ===== WebSocket关闭处理完成 =====');
   };
 
   const handleWebSocketOpen = () => {
-    console.log('🔍 ===== WebSocket连接已建立 =====');
-    console.log('🔍 连接时间:', new Date().toISOString());
-    console.log('🔍 当前conversationId:', currentConversationId);
-    console.log('🔍 连接状态:', wsConnectionState);
-    
     setWsConnected(true);
     setWsConnectionState('OPEN');
     setWsError(null);
-    
-    console.log('🔍 状态已更新');
-    messageHandler.addSystemMessage('🔗 WebSocket连接已建立，可以开始实时聊天');
-    
-    console.log('🔍 ===== WebSocket连接建立完成 =====');
+    messageHandler.addSystemMessage('🔗 WebSocket连接已建立');
   };
 
   // 自动检测URL参数并建立WebSocket连接
@@ -284,15 +374,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         }
         
         // 4. 自动连接：建立WebSocket连接
-        console.log('🔍 准备建立WebSocket连接');
-        console.log('🔍 WebSocket当前状态:', wsConnectionState);
-        console.log('🔍 WebSocket是否已连接:', wsConnected);
-        
-        if (!wsConnected && wsConnectionState === 'CLOSED') {
-          console.log('🔍 开始建立WebSocket连接...');
-          // 这里会触发WebSocket连接建立
-          // WebSocket连接会在组件渲染时自动建立
-        }
+        // WebSocket连接会在组件渲染时自动建立
         
         console.log('🔍 ===== conversationId变化处理完成 =====');
       }
@@ -367,6 +449,47 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         message: error?.message || '未知错误',
         stack: error?.stack || '无堆栈信息'
       });
+      
+      // 尝试使用备用API获取聊天历史
+      try {
+        console.log('🔍 尝试使用备用API获取聊天历史...');
+        const fallbackResponse = await apiClient.getChatHistoryList(conversationId, 1, 200);
+        console.log('🔍 备用API响应:', fallbackResponse);
+        
+        if (fallbackResponse?.code === 200 && fallbackResponse.data) {
+          console.log('🔍 备用API调用成功，开始处理历史数据');
+          // 处理备用API的数据格式
+          const sortedMessages = fallbackResponse.data.sort((a: any, b: any) => 
+            new Date(a.timestamp || a.createdAt).getTime() - new Date(b.timestamp || b.createdAt).getTime()
+          );
+          
+          let userMessageCount = 0;
+          let agentMessageCount = 0;
+          
+          sortedMessages.forEach((msg: any, index: number) => {
+            console.log(`🔍 处理第${index + 1}条备用历史消息:`, {
+              source: msg.source || msg.role,
+              content: msg.content?.substring(0, 50) + (msg.content?.length > 50 ? '...' : ''),
+              timestamp: msg.timestamp || msg.createdAt
+            });
+            
+            if (msg.source === 'user' || msg.role === 'user') {
+              messageHandler.addUserMessage(msg.content);
+              userMessageCount++;
+            } else if (msg.source === 'agent' || msg.role === 'assistant') {
+              messageHandler.addAgentThinkingMessage();
+              messageHandler.updateAgentMessage(msg.content, `thinking-${Date.now()}`);
+              agentMessageCount++;
+            }
+          });
+          
+          console.log('🔍 备用API聊天历史记录恢复完成');
+          console.log('🔍 恢复的用户消息数:', userMessageCount);
+          console.log('🔍 恢复的AI消息数:', agentMessageCount);
+        }
+      } catch (fallbackError: any) {
+        console.error('🔍 备用API也失败:', fallbackError);
+      }
     }
     
     console.log('🔍 ===== 聊天历史记录加载完成 =====');
@@ -583,6 +706,14 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     }
     if (!formattedInput || isMessageSending) return;
 
+    // 域名验证
+    if (currentStep === 0) {
+      if (!validateDomain(formattedInput)) {
+        messageApi.error('Please enter a valid website domain');
+        return;
+      }
+    }
+
     // --- 添加用户消息并显示思考状态 ---
     messageHandler.addUserMessage(formattedInput);
     const thinkingMessageId = messageHandler.addAgentThinkingMessage();
@@ -601,21 +732,17 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       // 根据图片规则：用户发送第一条消息创建聊天室
       let tempConversationId = currentConversationId;
 
+      // 如果没有conversationId，通过chat接口获取一个新的
       if (!tempConversationId) {
         setLoading(true);
-        // 用户发送第一条消息，API自动创建聊天室并返回WebSocket连接
-        const chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, null);
-
-        // 检查响应格式 - 可能返回WebSocket对象或包含conversationId的对象
-        if (chatResponse && 'websocket' in chatResponse) {
-          console.log('🔍 WebSocket模式，检查API响应中的conversationId');
+        try {
+          const chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
           
-          // 检查API响应中是否包含conversationId
-          if (chatResponse.conversationId) {
-            console.log('🔍 从API响应中获取到conversationId:', chatResponse.conversationId);
+          // 获取并保存新的conversationId
+          if (chatResponse && chatResponse.conversationId) {
             tempConversationId = chatResponse.conversationId;
             setCurrentConversationId(tempConversationId);
-
+            
             // 实时更新URL
             const currentPath = window.location.pathname;
             let targetPath = '/alternative';
@@ -627,37 +754,50 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               targetPath = '/alternative';
             }
             router.replace(`${targetPath}?conversationId=${tempConversationId}`);
+            
+            console.log('🔍 conversationId已获取并存储:', tempConversationId);
           } else {
-            console.log('🔍 WebSocket模式，等待后端返回conversationId');
-            // 等待WebSocket消息中的conversationId
-            const websocket = chatResponse.websocket;
-            websocket.onmessage = (event) => {
-              try {
-                const data = JSON.parse(event.data);
-                console.log('🔍 收到WebSocket消息:', data);
-                
-                if (data.conversationId) {
-                  console.log('🔍 收到后端返回的conversationId:', data.conversationId);
-                  setCurrentConversationId(data.conversationId);
+            // 如果API响应中没有conversationId，尝试从WebSocket消息中获取
+            if (chatResponse && 'websocket' in chatResponse) {
+              const websocket = chatResponse.websocket;
+              websocket.onmessage = (event) => {
+                try {
+                  const data = JSON.parse(event.data);
                   
-                  // 实时更新URL
-                  const currentPath = window.location.pathname;
-                  let targetPath = '/alternative';
-                  if (currentPath.includes('best')) {
-                    targetPath = '/best';
-                  } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
-                    targetPath = '/FAQ';
-                  } else if (currentPath.includes('alternative')) {
-                    targetPath = '/alternative';
+                  // 使用统一的WebSocket消息处理函数
+                  handleWebSocketMessage(data);
+                  
+                  if (data.conversationId) {
+                    setCurrentConversationId(data.conversationId);
+                    tempConversationId = data.conversationId;
+                    
+                    // 实时更新URL
+                    const currentPath = window.location.pathname;
+                    let targetPath = '/alternative';
+                    if (currentPath.includes('best')) {
+                      targetPath = '/best';
+                    } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+                      targetPath = '/FAQ';
+                    } else if (currentPath.includes('alternative')) {
+                      targetPath = '/alternative';
+                    }
+                    router.replace(`${targetPath}?conversationId=${data.conversationId}`);
+                    
+                    console.log('🔍 conversationId从WebSocket消息中获取:', data.conversationId);
                   }
-                  router.replace(`${targetPath}?conversationId=${data.conversationId}`);
+                } catch (error) {
+                  console.error('🔍 解析WebSocket消息失败:', error);
                 }
-              } catch (error) {
-                console.error('🔍 解析WebSocket消息失败:', error);
-              }
-            };
+              };
+            } else {
+              messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
+              setIsMessageSending(false);
+              setLoading(false);
+              return;
+            }
           }
-        } else {
+        } catch (error) {
+          console.error('🔍 创建聊天失败:', error);
           messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
           setIsMessageSending(false);
           setLoading(false);
@@ -666,22 +806,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       }
 
       // 处理响应 - 只使用WebSocket
-      console.log('🔍 WebSocket状态检查:', {
-        wsConnected,
-        wsConnecting,
-        wsConnectionState,
-        wsError,
-        hasChatService: false,
-        conversationId: tempConversationId
-      });
-
       // 使用API发送消息
-      console.log('🔍 尝试通过API发送消息');
       try {
         const response = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
-        if (response && 'websocket' in response) {
-          console.log('🔍 WebSocket连接成功，消息将通过WebSocket处理');
-        } else {
+        if (!response || !('websocket' in response)) {
           messageHandler.updateAgentMessage('Failed to establish WebSocket connection. Please try again.', thinkingMessageId);
         }
       } catch (error) {
@@ -1207,7 +1335,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                 }}
               >
                 <div className="flex items-start gap-3">
-                  <InfoCircleOutlined className={`${isHydrated ? themeStyles.systemMessage?.iconColor : 'text-slate-400'} text-lg mt-0.5 flex-shrink-0`} />
+                  <InfoCircleIcon />
                   <span className="leading-relaxed">
                     {message.content.split('\n').map((line: string, i: number) => (
                       <React.Fragment key={i}>
@@ -1574,12 +1702,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                         {messageCollapsed[index] ?? true ? (
                           <>
                             <span>Show More</span>
-                            <DownOutlined className="text-xs" />
+                            <DownIcon />
                           </>
                         ) : (
                           <>
                             <span>Show Less</span>
-                            <UpOutlined className="text-xs" />
+                            <UpIcon />
                           </>
                         )}
                       </div>
@@ -1824,16 +1952,26 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                       <div className="relative">
                         <div className="w-full max-w-xxl mx-auto">
                           {!isEntryPage && (
-                            <TaskStatusBar
-                              currentStep={currentStep}
-                              taskSteps={taskSteps}
-                              browserTabs={browserTabs}
-                              taskTimeEstimates={taskTimeEstimates}
-                              isExpanded={isStatusBarExpanded}
-                              setIsExpanded={setIsStatusBarExpanded}
-                              themeStyles={themeStyles}
-                              isHydrated={isHydrated}
-                            />
+                            <>
+                              <TaskStatusBar
+                                currentStep={currentStep}
+                                taskSteps={taskSteps}
+                                browserTabs={browserTabs}
+                                taskTimeEstimates={taskTimeEstimates}
+                                isExpanded={isStatusBarExpanded}
+                                setIsExpanded={setIsStatusBarExpanded}
+                                themeStyles={themeStyles}
+                                isHydrated={isHydrated}
+                              />
+                              <CompetitorSearchStatusBar
+                                competitorSearchStatus={competitorSearchStatus}
+                                sitemapStatus={sitemapStatus}
+                                isExpanded={competitorSearchStatusBarExpanded}
+                                setIsExpanded={setCompetitorSearchStatusBarExpanded}
+                                themeStyles={themeStyles}
+                                isHydrated={isHydrated}
+                              />
+                            </>
                           )}
                           <div className="rounded-2xl shadow-lg px-5 py-4 flex flex-col gap-2"
                             style={{
@@ -2104,17 +2242,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         </Modal>
       )} */}
 
-      {/* WebSocket连接组件 - 只在客户端渲染 */}
-      {typeof window !== 'undefined' && currentConversationId && (
-        <WebSocketConnection 
-          conversationId={currentConversationId}
-          onMessage={handleWebSocketMessage}
-          onError={handleWebSocketError}
-          onClose={handleWebSocketClose}
-          onOpen={handleWebSocketOpen}
-          autoConnect={true}
-        />
-      )}
+
     </>
   );
 };

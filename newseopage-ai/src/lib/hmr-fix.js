@@ -4,6 +4,16 @@
 if (typeof window !== 'undefined' && module.hot) {
   console.log('🔧 初始化HMR修复...');
   
+  // 添加全局错误处理
+  window.addEventListener('error', (event) => {
+    if (event.error && event.error.message && 
+        (event.error.message.includes('cssinjs') || 
+         event.error.message.includes('__webpack_require__.hmd'))) {
+      event.preventDefault();
+      console.warn('🔧 阻止了 cssinjs 相关的错误:', event.error.message);
+    }
+  });
+  
   // 保存原始的console.error
   const originalConsoleError = console.error;
   

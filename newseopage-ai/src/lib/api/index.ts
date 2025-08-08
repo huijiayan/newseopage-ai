@@ -358,13 +358,6 @@ const getAlternativeResult = async (websiteId: any) => {
 // 创建新聊天 - 使用WebSocket流式响应
 const chatWithAI = async (chatType: any, message: any, conversationId: any, onMessage?: (data: any) => void) => {
   try {
-    console.log('🔍 chatWithAI 调用开始:', {
-      chatType,
-      message: message?.substring(0, 100) + (message?.length > 100 ? '...' : ''),
-      conversationId,
-      hasOnMessage: !!onMessage
-    });
-
     // 检查是否在客户端环境
     if (typeof window === 'undefined') {
       throw new Error('WebSocket只在客户端可用');
@@ -372,10 +365,8 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, onMe
 
     // 获取访问令牌
     const token = localStorage.getItem('alternativelyAccessToken');
-    console.log('🔍 WebSocket模式 - Token:', token ? '存在' : '不存在');
     
     if (!token) {
-      console.error('🔍 WebSocket模式 - 缺少Token');
       throw new Error('缺少访问令牌');
     }
     
@@ -386,20 +377,12 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, onMe
         message,
         conversationId,
       });
-      console.log('🔍 WebSocket初始消息响应:', initialResponse.data);
       
       // 检查响应中是否包含conversation_id（API返回的字段名）
       if (initialResponse.data && initialResponse.data.conversation_id) {
-        console.log('🔍 从API响应中获取到conversation_id:', initialResponse.data.conversation_id);
-        
         // 使用API返回的conversation_id建立WebSocket连接
         const realConversationId = initialResponse.data.conversation_id;
         const wsUrl = `${CHAT_WS_URL}/ws/chat/${realConversationId}?token=${token}`;
-        console.log('🔍 ===== WebSocket连接信息 =====');
-        console.log('🔍 WebSocket URL:', wsUrl);
-        console.log('🔍 ConversationId:', realConversationId);
-        console.log('🔍 Token存在:', !!token);
-        console.log('🔍 =============================');
         
         const websocket = new WebSocket(wsUrl);
         
@@ -407,52 +390,21 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, onMe
         websocket.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            console.log('🔍 ===== WebSocket消息接收 =====');
-            console.log('🔍 原始消息:', event.data);
-            console.log('🔍 解析后数据:', data);
-            console.log('🔍 消息类型:', typeof data);
-            console.log('🔍 消息键:', Object.keys(data));
-            if (data.conversationId) {
-              console.log('🔍 消息中的conversationId:', data.conversationId);
-            }
-            if (data.type) {
-              console.log('🔍 消息类型:', data.type);
-            }
-            
-            // 检查interrupt相关信息
-            if (data.interrupt !== undefined) {
-              console.log('🔍 ⚠️ 发现interrupt信息:', data.interrupt);
-            }
-            if (data.interrupted !== undefined) {
-              console.log('🔍 ⚠️ 发现interrupted信息:', data.interrupted);
-            }
-            if (data.canInterrupt !== undefined) {
-              console.log('🔍 ⚠️ 发现canInterrupt信息:', data.canInterrupt);
-            }
-            
-            // 检查消息内容中是否包含interrupt关键词
-            if (data.content && typeof data.content === 'string' && data.content.toLowerCase().includes('interrupt')) {
-              console.log('🔍 ⚠️ 消息内容包含interrupt关键词:', data.content);
-            }
-            
-            console.log('🔍 ===========================');
             
             if (onMessage) {
               onMessage(data);
             }
           } catch (error) {
             console.error('🔍 WebSocket消息解析失败:', error);
-            console.error('🔍 原始消息内容:', event.data);
           }
         };
         
         websocket.onerror = (error) => {
-          console.error('WebSocket connection error:', error);
           websocket.close();
         };
         
         websocket.onclose = (event) => {
-          console.log('WebSocket connection closed:', event.code, event.reason);
+          // 静默处理关闭事件
         };
         
         return {
@@ -460,15 +412,12 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, onMe
           conversationId: realConversationId // 使用API返回的字段名
         };
       } else {
-        console.error('🔍 API响应中未包含conversation_id');
         throw new Error('API响应中未包含conversation_id');
       }
     } catch (error) {
-      console.error('🔍 WebSocket初始消息发送失败:', error);
       throw error;
     }
   } catch (error: any) {
-    console.error('Failed to chat with AI:', error);
     throw error;
   }
 };
@@ -524,16 +473,27 @@ const getCustomerPackage = async () => {
   }
 };
 
-// 获取聊天历史记录 - 使用新的聊天服务器
+// 获取聊天历史记录 - 使用主API服务器（聊天服务器暂时不可用）
 const getAlternativeChatHistory = async (conversationId: any) => {
   try {
-    const response = await chatApiClient.get('/api/chat/history', {
-      params: { conversationId }
+    // 首先尝试使用主API服务器的聊天历史接口
+    const response = await apiClient.get('/alternatively/chat/list', {
+      params: { conversationId, page: 1, limit: 200 }
     });
     return response.data;
   } catch (error) {
-    console.error('Failed to get chat history:', error);
-    throw error;
+    console.error('Failed to get chat history from main API:', error);
+    
+    // 如果主API也失败，尝试使用聊天服务器作为备用
+    try {
+      const chatResponse = await chatApiClient.get('/api/chat/history', {
+        params: { conversationId }
+      });
+      return chatResponse.data;
+    } catch (chatError) {
+      console.error('Failed to get chat history from chat API:', chatError);
+      throw error; // 抛出原始错误
+    }
   }
 };
 

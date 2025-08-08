@@ -24,6 +24,14 @@ export interface CompetitorSearchResponse {
   error?: string;
 }
 
+export interface SitemapStatusResponse {
+  success: boolean;
+  status?: string;
+  progress?: number;
+  message?: string;
+  error?: string;
+}
+
 export class ChatRoomService {
   private config: ChatRoomConfig;
 
@@ -49,28 +57,24 @@ export class ChatRoomService {
 
       // 检查响应格式
       if (response && 'websocket' in response) {
-        console.log('🔍 WebSocket模式，聊天室创建成功');
         return {
           success: true,
           conversationId: this.config.conversationId || `temp-${Date.now()}`,
           message: '聊天室创建成功'
         };
       } else if (response && (response as any)?.message?.answer) {
-        console.log('🔍 HTTP模式，聊天室创建成功');
         return {
           success: true,
           conversationId: this.config.conversationId || undefined,
           message: '聊天室创建成功'
         };
       } else {
-        console.error('🔍 聊天室创建失败: 无效响应');
         return {
           success: false,
           error: '聊天室创建失败'
         };
       }
     } catch (error: any) {
-      console.error('🔍 聊天室创建失败:', error);
       return {
         success: false,
         error: error.message || '聊天室创建失败'
@@ -94,28 +98,23 @@ export class ChatRoomService {
     localStorage.setItem('currentDomain', extractedDomain);
     localStorage.setItem('currentProductUrl', processedDomain);
     
-    console.log('🔍 域名已处理并存储:', {
-      original: processedDomain,
-      extracted: extractedDomain,
-      chatType: this.config.chatType
-    });
-    
     return extractedDomain;
   }
 
-  // 搜索竞争对手
-  async searchCompetitors(domain: string, conversationId: string): Promise<CompetitorSearchResponse> {
+  // 启动竞品搜索 - 新增功能
+  async startCompetitorSearch(tempConversationId: string, formattedInput: string): Promise<CompetitorSearchResponse> {
     try {
-      console.log('🔍 搜索竞争对手:', {
-        domain,
-        conversationId,
-        chatType: this.config.chatType
-      });
-
-      const response = await apiClient.searchCompetitor(conversationId, domain);
+      console.log('🔍 竞品搜索启动');
+      console.log('🔍 API调用: apiClient.searchCompetitor(tempConversationId, formattedInput)');
+      console.log('🔍 功能: 开始搜索竞争对手');
+      
+      const response = await apiClient.searchCompetitor(tempConversationId, formattedInput);
+      
+      console.log('🔍 响应处理:');
+      console.log('🔍 检查任务状态 (sitemapStatus)');
+      console.log('🔍 处理各种错误码 (1075, 1058, 13002)');
       
       if (response?.code === 200) {
-        console.log('🔍 竞争对手搜索成功');
         return {
           success: true,
           competitors: response.data?.competitors || [],
@@ -125,6 +124,73 @@ export class ChatRoomService {
         return {
           success: false,
           error: 'There is a task in progress. Please select from the left chat list'
+        };
+      } else if (response?.code === 1058) {
+        return {
+          success: false,
+          error: 'Encountered a network error. Please try again.'
+        };
+      } else if (response?.code === 13002) {
+        return {
+          success: false,
+          error: 'Please subscribe before starting a task.'
+        };
+      } else {
+        return {
+          success: false,
+          error: '竞争对手搜索失败'
+        };
+      }
+    } catch (error: any) {
+      console.error('🔍 竞争对手搜索失败:', error);
+      return {
+        success: false,
+        error: error.message || '竞争对手搜索失败'
+      };
+    }
+  }
+
+  // 检查sitemap状态 - 新增功能
+  async checkSitemapStatus(websiteId: string): Promise<SitemapStatusResponse> {
+    try {
+      console.log('🔍 检查sitemap状态');
+      console.log('🔍 搜索完成之后，还要检查sitemapstatus网站地图的处理');
+      console.log('🔍 这些数据通过实时聊天将后端的数据推到前端');
+      
+      const response = await apiClient.getWebsiteSitemap(websiteId);
+      
+      if (response?.code === 200) {
+        return {
+          success: true,
+          status: response.data?.status || 'processing',
+          progress: response.data?.progress || 0,
+          message: response.data?.message || '网站地图处理中'
+        };
+      } else {
+        return {
+          success: false,
+          error: '获取网站地图状态失败'
+        };
+      }
+    } catch (error: any) {
+      console.error('🔍 检查sitemap状态失败:', error);
+      return {
+        success: false,
+        error: error.message || '检查sitemap状态失败'
+      };
+    }
+  }
+
+  // 搜索竞争对手
+  async searchCompetitors(domain: string, conversationId: string): Promise<CompetitorSearchResponse> {
+    try {
+      const response = await apiClient.searchCompetitor(conversationId, domain);
+      
+      if (response?.code === 200) {
+        return {
+          success: true,
+          competitors: response.data?.competitors || [],
+          websiteId: response.data?.websiteId
         };
       } else if (response?.code === 1058) {
         return {

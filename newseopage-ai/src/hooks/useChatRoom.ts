@@ -2,7 +2,7 @@
 // 提供React组件中聊天室功能的状态管理和方法
 
 import { useState, useCallback, useRef } from 'react';
-import { ChatRoomService, ChatRoomConfig, ChatRoomResponse, CompetitorSearchResponse } from '@/services/chatRoomService';
+import { ChatRoomService, ChatRoomConfig, ChatRoomResponse, CompetitorSearchResponse, SitemapStatusResponse } from '@/services/chatRoomService';
 import { getPageMode } from '@/components/research-tool/utils/research-tool-utils';
 
 export interface UseChatRoomOptions {
@@ -11,6 +11,7 @@ export interface UseChatRoomOptions {
   onChatCreated?: (conversationId: string) => void;
   onCompetitorsFound?: (competitors: any[], websiteId?: string) => void;
   onWebsiteIdFound?: (websiteId: string) => void;
+  onSitemapStatusUpdate?: (status: SitemapStatusResponse) => void;
   onError?: (error: string) => void;
 }
 
@@ -18,12 +19,15 @@ export interface UseChatRoomReturn {
   // 状态
   isCreating: boolean;
   isSearching: boolean;
+  isCheckingSitemap: boolean;
   error: string | null;
   
   // 方法
   createOrContinueChat: (message: string) => Promise<ChatRoomResponse>;
   processDomain: (domain: string) => string;
+  startCompetitorSearch: (tempConversationId: string, formattedInput: string) => Promise<CompetitorSearchResponse>;
   searchCompetitors: (domain: string, conversationId: string) => Promise<CompetitorSearchResponse>;
+  checkSitemapStatus: (websiteId: string) => Promise<SitemapStatusResponse>;
   findWebsiteIdByDomain: (domain: string) => Promise<string | null>;
   getStoredDomain: () => string | null;
   getStoredProductUrl: () => string | null;
@@ -40,12 +44,14 @@ export const useChatRoom = (options: UseChatRoomOptions = {}): UseChatRoomReturn
     onChatCreated,
     onCompetitorsFound,
     onWebsiteIdFound,
+    onSitemapStatusUpdate,
     onError
   } = options;
 
   // 状态
   const [isCreating, setIsCreating] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isCheckingSitemap, setIsCheckingSitemap] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // 服务实例
@@ -109,6 +115,88 @@ export const useChatRoom = (options: UseChatRoomOptions = {}): UseChatRoomReturn
       throw error;
     }
   }, [onError]);
+
+  // 启动竞品搜索 - 新增功能
+  const startCompetitorSearch = useCallback(async (tempConversationId: string, formattedInput: string): Promise<CompetitorSearchResponse> => {
+    try {
+      setIsSearching(true);
+      setError(null);
+
+      console.log('🔍 开始启动竞品搜索:', {
+        tempConversationId,
+        formattedInput: formattedInput.substring(0, 100) + (formattedInput.length > 100 ? '...' : ''),
+        chatType
+      });
+
+      const response = await chatRoomServiceRef.current.startCompetitorSearch(tempConversationId, formattedInput);
+
+      if (response.success) {
+        console.log('🔍 竞品搜索启动成功:', {
+          competitorsCount: response.competitors?.length || 0,
+          websiteId: response.websiteId
+        });
+        onCompetitorsFound?.(response.competitors || [], response.websiteId);
+      } else if (response.error) {
+        console.error('🔍 竞品搜索启动失败:', response.error);
+        setError(response.error);
+        onError?.(response.error);
+      }
+
+      return response;
+    } catch (error: any) {
+      console.error('🔍 竞品搜索启动异常:', error);
+      const errorMessage = error.message || '竞品搜索启动失败';
+      setError(errorMessage);
+      onError?.(errorMessage);
+      return {
+        success: false,
+        error: errorMessage
+      };
+    } finally {
+      setIsSearching(false);
+    }
+  }, [chatType, onCompetitorsFound, onError]);
+
+  // 检查sitemap状态 - 新增功能
+  const checkSitemapStatus = useCallback(async (websiteId: string): Promise<SitemapStatusResponse> => {
+    try {
+      setIsCheckingSitemap(true);
+      setError(null);
+
+      console.log('🔍 开始检查sitemap状态:', {
+        websiteId,
+        chatType
+      });
+
+      const response = await chatRoomServiceRef.current.checkSitemapStatus(websiteId);
+
+      if (response.success) {
+        console.log('🔍 sitemap状态检查成功:', {
+          status: response.status,
+          progress: response.progress,
+          message: response.message
+        });
+        onSitemapStatusUpdate?.(response);
+      } else if (response.error) {
+        console.error('🔍 sitemap状态检查失败:', response.error);
+        setError(response.error);
+        onError?.(response.error);
+      }
+
+      return response;
+    } catch (error: any) {
+      console.error('🔍 sitemap状态检查异常:', error);
+      const errorMessage = error.message || 'sitemap状态检查失败';
+      setError(errorMessage);
+      onError?.(errorMessage);
+      return {
+        success: false,
+        error: errorMessage
+      };
+    } finally {
+      setIsCheckingSitemap(false);
+    }
+  }, [chatType, onSitemapStatusUpdate, onError]);
 
   // 搜索竞争对手
   const searchCompetitors = useCallback(async (domain: string, conversationId: string): Promise<CompetitorSearchResponse> => {
@@ -193,12 +281,15 @@ export const useChatRoom = (options: UseChatRoomOptions = {}): UseChatRoomReturn
     // 状态
     isCreating,
     isSearching,
+    isCheckingSitemap,
     error,
     
     // 方法
     createOrContinueChat,
     processDomain,
+    startCompetitorSearch,
     searchCompetitors,
+    checkSitemapStatus,
     findWebsiteIdByDomain,
     getStoredDomain,
     getStoredProductUrl,

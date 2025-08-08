@@ -191,11 +191,8 @@ export const Hero: React.FC = () => {
           
           // 检查响应格式 - chatWithAI接口已经生成conversationId
           if (chatResponse && 'websocket' in chatResponse) {
-            console.log('🔍 WebSocket模式，API已生成conversationId');
-            
             // API响应中应该包含conversationId
             if (chatResponse.conversationId) {
-              console.log('🔍 从API响应中获取到conversationId:', chatResponse.conversationId);
               
               // 更新状态并跳转
               setCurrentConversationId(chatResponse.conversationId);
@@ -222,7 +219,6 @@ export const Hero: React.FC = () => {
               
               return;
             } else {
-              console.error('🔍 API响应中未包含conversation_id');
               messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
               setIsMessageSending(false);
               setLoading(false);

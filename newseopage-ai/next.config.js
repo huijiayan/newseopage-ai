@@ -18,12 +18,16 @@ const nextConfig = {
       // 配置HMR选项，避免cssinjs问题
       config.resolve.alias = {
         ...config.resolve.alias,
+        // 禁用 Ant Design CSS-in-JS 的 HMR
+        '@ant-design/cssinjs': false,
       };
       
       // 添加HMR错误处理
       config.plugins.push(
         new (require('webpack')).DefinePlugin({
           'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV),
+          // 禁用 CSS-in-JS HMR
+          'process.env.DISABLE_CSSINJS_HMR': JSON.stringify('true'),
         })
       );
       
@@ -45,6 +49,20 @@ const nextConfig = {
         test: /node_modules\/@ant-design\/cssinjs\/es\/(extractStyle|index)\.js$/,
         use: 'ignore-loader',
       });
+      
+      // 添加 ignore-loader 到 webpack 配置
+      config.module.rules.push({
+        test: /node_modules\/@ant-design\/cssinjs/,
+        use: 'ignore-loader',
+      });
+      
+      // 禁用 CSS-in-JS 的 HMR
+      config.plugins.push(
+        new (require('webpack')).IgnorePlugin({
+          resourceRegExp: /@ant-design\/cssinjs/,
+          contextRegExp: /node_modules/,
+        })
+      );
     }
     
     return config;

@@ -8,7 +8,7 @@ import SubscriptionCard from '@/components/ui/SubscriptionCard';
 import CTAModule from '@/components/ui/CTAModule';
 import InvisibleMarketingGraphic from '@/components/ui/InvisibleMarketingGraphic';
 import { Hero } from '@/components/ui/Hero';
-import { ResearchTool, injectResearchToolStyles } from '@/components/research-tool';
+import { ResearchTool } from '@/components/research-tool';
 
 // Alternative 页面内容组件
 function AlternativePageContent() {
@@ -16,12 +16,7 @@ function AlternativePageContent() {
   const conversationId = searchParams.get('conversationId');
   const mode = searchParams.get('mode') as 'normal' | 'recover' || 'normal';
 
-  // 确保样式文件被正确注入
-  useEffect(() => {
-    if (conversationId) {
-      injectResearchToolStyles();
-    }
-  }, [conversationId]);
+  // 样式已通过 CSS 文件预编译，无需动态注入
 
   return (
       <div className="min-h-[calc(100vh-66px)] bg-[#F8FAFB] dark:bg-dark-navy">

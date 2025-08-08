@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
+import '@/components/research-tool/styles/research-tool.css';
 import { Layout } from '@/components/layout/Layout';
 import { AppProvider } from '@/context/AppContext';
 import { MessageProvider } from '@/components/ui/CustomMessage';
