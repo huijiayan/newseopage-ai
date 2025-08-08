@@ -10,6 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:api": "node test-api.js",
     "postinstall": "next telemetry disable"
   },
   "dependencies": {

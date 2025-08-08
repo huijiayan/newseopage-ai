@@ -38,7 +38,8 @@ import {
   injectResearchToolStyles,
   validateDomain
 } from './utils/research-tool-utils';
-import apiClient from '@/lib/api';
+ import apiClient from '@/lib/api';
+ import { useWebSocketChat } from '@/hooks/useWebSocketChat';
 
 
 // 这是整个聊天页面的主要功能组件
@@ -75,6 +76,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const [startedTaskCountRef] = React.useState(React.useRef(0));
   const [retryCountRef] = React.useState(React.useRef(0));
   const [codeContainerRef] = React.useState(React.useRef<HTMLPreElement>(null));
+  const competitorSearchTriggeredRef = React.useRef(false);
 
   // 使用统一的状态管理hook
   const {
@@ -161,7 +163,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   } = useResearchTool(conversationId, mode);
 
   // WebSocket聊天功能
-  // WebSocket连接管理
+  // WebSocket连接管理（本地UI状态，实际连接由useWebSocketChat管理）
   const [wsConnected, setWsConnected] = useState(false);
   const [wsConnecting, setWsConnecting] = useState(false);
   const [wsConnectionState, setWsConnectionState] = useState('CLOSED');
@@ -173,21 +175,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     // 使用增强的消息处理器处理WebSocket消息
     messageHandler.handleWebSocketMessage(data);
     
-    // 检查AI响应是否包含[URL_GET]标记
-    if (data.type === 'message' && data.content && data.content.includes('[URL_GET]')) {
-      console.log('🔍 检测到[URL_GET]标记，开始竞品搜索流程');
-      
-      // 获取存储的formattedInput
-      const storedFormattedInput = localStorage.getItem('currentProductUrl');
-      if (storedFormattedInput) {
-        console.log('🔍 从localStorage获取formattedInput:', storedFormattedInput);
-        
-        // 调用竞品搜索API
-        handleCompetitorSearch(storedFormattedInput);
-      } else {
-        console.error('🔍 未找到存储的formattedInput');
-      }
-    }
+    // 旧逻辑：根据 [URL_GET] 自动触发竞品搜索
+    // 已按需求移除，避免重复触发。竞品搜索仅在 Hero 中的新会话创建后触发。
     
     // 如果是sitemap状态更新，设置状态
     if (data.type === 'sitemap_status') {
@@ -221,15 +210,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       // 4. 最后获取竞品分析结果
       const resultData = await apiClient.getAlternativeResult(websiteId);
       console.log('🔍 竞品分析结果:', resultData);
-      
-      // 5. 打印所有后端数据汇总
-      console.log('🔍 ===== 竞品分析完整数据汇总 =====');
-      console.log('🔍 WebsiteId:', websiteId);
-      console.log('🔍 网站地图数据:', sitemapData);
-      console.log('🔍 竞品来源数据:', sourcesData);
-      console.log('🔍 竞品分析详情:', detailData);
-      console.log('🔍 竞品分析结果:', resultData);
-      console.log('🔍 ===== 数据汇总完成 =====');
       
     } catch (error) {
       console.error('🔍 获取竞品分析结果失败:', error);
@@ -309,14 +289,51 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     messageHandler.addSystemMessage('🔗 WebSocket连接已建立');
   };
 
+  // 使用统一的 WebSocket Chat Hook 来建立与管理连接
+  const { connect: connectWebSocketChat, disconnect: disconnectWebSocketChat } = useWebSocketChat({
+    onMessage: handleWebSocketMessage,
+    onOpen: handleWebSocketOpen,
+    onError: handleWebSocketError,
+    onClose: handleWebSocketClose,
+  });
+
+  // 当拿到 conversationId 时，建立 WebSocket 连接；组件卸载或会话变更时断开
+  // 仅在“无历史的新会话”进入时才连接 WS：
+  // Hero 会在新会话创建时不带历史地跳转，这里判断 localStorage 标记决定是否连接
+  useEffect(() => {
+    if (!currentConversationId) return;
+    // 防抖：如果已为该会话建立连接则不重复
+    const alreadyConnectedFor = (window as any).__wsConnectedFor;
+    if (alreadyConnectedFor === currentConversationId) return;
+
+    const pendingRaw = localStorage.getItem('pendingNewChat');
+    if (pendingRaw) {
+      try {
+        const pending = JSON.parse(pendingRaw);
+        (window as any).__wsConnectedFor = currentConversationId;
+        connectWebSocketChat(currentConversationId);
+        if (!competitorSearchTriggeredRef.current && pending?.domain) {
+          (async () => {
+            try {
+              // 先补发一条聊天消息到后端，确保会话上下文中有用户输入
+              await apiClient.chatWithAI(getPageMode(), pending.domain, currentConversationId);
+            } catch (e) {
+              console.warn('补发 chatWithAI 失败（继续竞品搜索流程）:', e);
+            }
+            competitorSearchTriggeredRef.current = true;
+            handleCompetitorSearch(pending.domain);
+          })();
+        }
+      } catch {}
+    }
+    return () => {
+      disconnectWebSocketChat();
+    };
+  }, [currentConversationId]);
+
   // 自动检测URL参数并建立WebSocket连接
   useEffect(() => {
     try {
-      console.log('🔍 ===== 开始自动检测URL参数 =====');
-      console.log('🔍 当前URL:', typeof window !== 'undefined' ? window.location.href : 'SSR环境');
-      console.log('🔍 传入的conversationId:', conversationId);
-      console.log('🔍 传入的mode:', mode);
-      console.log('🔍 当前currentConversationId:', currentConversationId);
       
       // 1. 自动检测：URL中的conversationId参数
       const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
@@ -328,9 +345,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       let shouldRecover = false;
       
       if (targetConversationId) {
-        console.log('🔍 检测到conversationId，准备进入恢复模式');
-        console.log('🔍 目标conversationId:', targetConversationId);
-        console.log('🔍 当前模式:', mode);
         
         // 如果URL中有conversationId或传入的mode是recover，则进入恢复模式
         if (urlConversationId || mode === 'recover') {
@@ -347,14 +361,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       } else {
         console.log('🔍 未检测到conversationId，保持正常模式');
       }
-      
-      console.log('🔍 ===== URL参数检测完成 =====');
     } catch (error: any) {
-      console.error('🔍 URL参数检测过程中发生错误:', error);
-      console.error('🔍 错误详情:', {
-        message: error?.message || '未知错误',
-        stack: error?.stack || '无堆栈信息'
-      });
     }
   }, [conversationId, mode]); // 移除currentConversationId依赖，避免无限循环
 
@@ -362,13 +369,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   useEffect(() => {
     try {
       if (currentConversationId) {
-        console.log('🔍 ===== 开始处理conversationId变化 =====');
-        console.log('🔍 conversationId已设置:', currentConversationId);
-        console.log('🔍 当前模式:', mode);
-        console.log('🔍 是否恢复模式:', isRecoveryMode);
         
-        // 3. 自动获取：聊天历史数据
-        if (mode === 'recover' || conversationId || isRecoveryMode) {
+        // 3. 自动获取：聊天历史数据（若是新会话 pendingNewChat 则不取历史，避免被误判为旧会话）
+        const hasPendingNewChat = !!localStorage.getItem('pendingNewChat');
+        if (!hasPendingNewChat && (mode === 'recover' || conversationId || isRecoveryMode)) {
           console.log('🔍 开始恢复聊天历史记录');
           loadChatHistory(currentConversationId);
         }
@@ -385,12 +389,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         stack: error?.stack || '无堆栈信息'
       });
     }
-  }, [currentConversationId, mode, conversationId, isRecoveryMode, wsConnected, wsConnectionState]);
+  }, [currentConversationId, mode, conversationId, isRecoveryMode]);
 
   // 加载聊天历史记录
   const loadChatHistory = async (conversationId: string) => {
     console.log('🔍 ===== 开始加载聊天历史记录 =====');
-    console.log('🔍 目标conversationId:', conversationId);
     
     try {
       console.log('🔍 调用API获取聊天历史...');
@@ -449,47 +452,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         message: error?.message || '未知错误',
         stack: error?.stack || '无堆栈信息'
       });
-      
-      // 尝试使用备用API获取聊天历史
-      try {
-        console.log('🔍 尝试使用备用API获取聊天历史...');
-        const fallbackResponse = await apiClient.getChatHistoryList(conversationId, 1, 200);
-        console.log('🔍 备用API响应:', fallbackResponse);
-        
-        if (fallbackResponse?.code === 200 && fallbackResponse.data) {
-          console.log('🔍 备用API调用成功，开始处理历史数据');
-          // 处理备用API的数据格式
-          const sortedMessages = fallbackResponse.data.sort((a: any, b: any) => 
-            new Date(a.timestamp || a.createdAt).getTime() - new Date(b.timestamp || b.createdAt).getTime()
-          );
-          
-          let userMessageCount = 0;
-          let agentMessageCount = 0;
-          
-          sortedMessages.forEach((msg: any, index: number) => {
-            console.log(`🔍 处理第${index + 1}条备用历史消息:`, {
-              source: msg.source || msg.role,
-              content: msg.content?.substring(0, 50) + (msg.content?.length > 50 ? '...' : ''),
-              timestamp: msg.timestamp || msg.createdAt
-            });
-            
-            if (msg.source === 'user' || msg.role === 'user') {
-              messageHandler.addUserMessage(msg.content);
-              userMessageCount++;
-            } else if (msg.source === 'agent' || msg.role === 'assistant') {
-              messageHandler.addAgentThinkingMessage();
-              messageHandler.updateAgentMessage(msg.content, `thinking-${Date.now()}`);
-              agentMessageCount++;
-            }
-          });
-          
-          console.log('🔍 备用API聊天历史记录恢复完成');
-          console.log('🔍 恢复的用户消息数:', userMessageCount);
-          console.log('🔍 恢复的AI消息数:', agentMessageCount);
-        }
-      } catch (fallbackError: any) {
-        console.error('🔍 备用API也失败:', fallbackError);
-      }
+      // 固定端点策略：不再尝试备用接口
     }
     
     console.log('🔍 ===== 聊天历史记录加载完成 =====');
@@ -757,44 +720,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             
             console.log('🔍 conversationId已获取并存储:', tempConversationId);
           } else {
-            // 如果API响应中没有conversationId，尝试从WebSocket消息中获取
-            if (chatResponse && 'websocket' in chatResponse) {
-              const websocket = chatResponse.websocket;
-              websocket.onmessage = (event) => {
-                try {
-                  const data = JSON.parse(event.data);
-                  
-                  // 使用统一的WebSocket消息处理函数
-                  handleWebSocketMessage(data);
-                  
-                  if (data.conversationId) {
-                    setCurrentConversationId(data.conversationId);
-                    tempConversationId = data.conversationId;
-                    
-                    // 实时更新URL
-                    const currentPath = window.location.pathname;
-                    let targetPath = '/alternative';
-                    if (currentPath.includes('best')) {
-                      targetPath = '/best';
-                    } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
-                      targetPath = '/FAQ';
-                    } else if (currentPath.includes('alternative')) {
-                      targetPath = '/alternative';
-                    }
-                    router.replace(`${targetPath}?conversationId=${data.conversationId}`);
-                    
-                    console.log('🔍 conversationId从WebSocket消息中获取:', data.conversationId);
-                  }
-                } catch (error) {
-                  console.error('🔍 解析WebSocket消息失败:', error);
-                }
-              };
-            } else {
-              messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
-              setIsMessageSending(false);
-              setLoading(false);
-              return;
-            }
+            // 后端未直接返回conversationId，交由上方useWebSocketChat连接后续消息
+            messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
+            setIsMessageSending(false);
+            setLoading(false);
+            return;
           }
         } catch (error) {
           console.error('🔍 创建聊天失败:', error);
@@ -805,16 +735,15 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         }
       }
 
-      // 处理响应 - 只使用WebSocket
-      // 使用API发送消息
+      // 处理响应 - 使用API告知后端；WebSocket连接由hook负责
       try {
-        const response = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
-        if (!response || !('websocket' in response)) {
-          messageHandler.updateAgentMessage('Failed to establish WebSocket connection. Please try again.', thinkingMessageId);
-        }
+        await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
       } catch (error) {
-        console.error('WebSocket connection failed:', error);
-        messageHandler.updateAgentMessage('Failed to establish WebSocket connection. Please try again.', thinkingMessageId);
+        console.error('🔍 通过API发送消息失败:', error);
+        messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
+        setIsMessageSending(false);
+        setLoading(false);
+        return;
       }
     } catch (error) {
       // 静默处理错误
@@ -1953,16 +1882,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                         <div className="w-full max-w-xxl mx-auto">
                           {!isEntryPage && (
                             <>
-                              <TaskStatusBar
-                                currentStep={currentStep}
-                                taskSteps={taskSteps}
-                                browserTabs={browserTabs}
-                                taskTimeEstimates={taskTimeEstimates}
-                                isExpanded={isStatusBarExpanded}
-                                setIsExpanded={setIsStatusBarExpanded}
-                                themeStyles={themeStyles}
-                                isHydrated={isHydrated}
-                              />
                               <CompetitorSearchStatusBar
                                 competitorSearchStatus={competitorSearchStatus}
                                 sitemapStatus={sitemapStatus}

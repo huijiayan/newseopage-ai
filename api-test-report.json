@@ -1,0 +1,119 @@
+[
+  {
+    "name": "GET /features-package",
+    "method": "GET",
+    "path": "/features-package",
+    "outcome": "PASS",
+    "reason": "OK",
+    "status": 200
+  },
+  {
+    "name": "GET /pages/view/:slug (nonexistent slug accepted as 404)",
+    "method": "GET",
+    "path": "/pages/view/test-slug-should-not-exist",
+    "outcome": "PASS",
+    "reason": "OK",
+    "status": 200
+  },
+  {
+    "name": "GET /alternatively/website/sitemap?websiteId=invalid",
+    "method": "GET",
+    "path": "/alternatively/website/sitemap",
+    "outcome": "FAIL",
+    "reason": "Unauthorized (missing/invalid token)",
+    "status": 401
+  },
+  {
+    "name": "GET /alternatively/results/:websiteId (invalid)",
+    "method": "GET",
+    "path": "/alternatively/results/invalid",
+    "outcome": "FAIL",
+    "reason": "Unauthorized (missing/invalid token)",
+    "status": 401
+  },
+  {
+    "name": "GET /alternatively/:websiteId/status (invalid)",
+    "method": "GET",
+    "path": "/alternatively/invalid/status",
+    "outcome": "FAIL",
+    "reason": "Not Found (path or method likely incorrect)",
+    "status": 404
+  },
+  {
+    "name": "GET /customer/package",
+    "method": "GET",
+    "path": "/customer/package",
+    "outcome": "FAIL",
+    "reason": "Unauthorized (missing/invalid token)",
+    "status": 401
+  },
+  {
+    "name": "GET /customer/info",
+    "method": "GET",
+    "path": "/customer/info",
+    "outcome": "FAIL",
+    "reason": "Unauthorized (missing/invalid token)",
+    "status": 401
+  },
+  {
+    "name": "GET /products/customer",
+    "method": "GET",
+    "path": "/products/customer",
+    "outcome": "FAIL",
+    "reason": "Unauthorized (missing/invalid token)",
+    "status": 401
+  },
+  {
+    "name": "GET /customer/subfolder",
+    "method": "GET",
+    "path": "/customer/subfolder",
+    "outcome": "FAIL",
+    "reason": "Unauthorized (missing/invalid token)",
+    "status": 401
+  },
+  {
+    "name": "GET /domain?customerId=invalid",
+    "method": "GET",
+    "path": "/domain",
+    "outcome": "FAIL",
+    "reason": "Unauthorized (missing/invalid token)",
+    "status": 401
+  },
+  {
+    "name": "GET /sites (GSC sites)",
+    "method": "GET",
+    "path": "/sites",
+    "outcome": "FAIL",
+    "reason": "Unauthorized (missing/invalid token)",
+    "status": 401
+  },
+  {
+    "name": "GET /sites/analytics (requires params)",
+    "method": "GET",
+    "path": "/sites/analytics",
+    "outcome": "FAIL",
+    "reason": "Unauthorized (missing/invalid token)",
+    "status": 401
+  },
+  {
+    "name": "POST /competitor/research",
+    "method": "POST",
+    "path": "/competitor/research",
+    "skipped": true,
+    "reason": "Skipped (safeOnly)"
+  },
+  {
+    "name": "POST /alternatively/generate/websiteId",
+    "method": "POST",
+    "path": "/alternatively/generate/websiteId",
+    "skipped": true,
+    "reason": "Skipped (safeOnly)"
+  },
+  {
+    "name": "POST /alternatively/search",
+    "method": "POST",
+    "path": "/alternatively/search",
+    "skipped": true,
+    "reason": "Skipped (safeOnly)"
+  }
+]

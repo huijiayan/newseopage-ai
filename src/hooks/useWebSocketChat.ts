@@ -84,6 +84,21 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     }
 
     try {
+      const w: any = window as any;
+      // 全局单例/单飞: 同一个会话已在连接或已连接则不重复连接
+      if (w.__wsActiveConvId === targetConversationId && (w.__wsIsOpen || w.__wsIsConnecting)) {
+        setConnectionState(w.__wsIsOpen ? 'OPEN' : 'CONNECTING');
+        setIsConnected(!!w.__wsIsOpen);
+        setIsConnecting(!!w.__wsIsConnecting);
+        return;
+      }
+
+      if (w.__wsIsConnecting) {
+        return;
+      }
+
+      w.__wsIsConnecting = true;
+      w.__wsActiveConvId = targetConversationId;
       setError(null);
       setIsConnecting(true);
       setConnectionState('CONNECTING');
@@ -114,6 +129,10 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
             setConnectionState('OPEN');
             onOpen?.();
           }
+          // 标记全局状态为已连接
+          const w2: any = window as any;
+          w2.__wsIsOpen = true;
+          w2.__wsIsConnecting = false;
         }
       );
 
@@ -141,6 +160,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         setIsConnecting(false);
         setConnectionState('CLOSED');
       }
+      const w3: any = window as any;
+      if (w3.__wsActiveConvId === targetConversationId) {
+        w3.__wsIsConnecting = false;
+        w3.__wsIsOpen = false;
+      }
     }
   }, [currentConversationId, onMessage, onError, onClose, onOpen, isClient]);
 
@@ -155,6 +179,13 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     setIsConnected(false);
     setIsConnecting(false);
     setConnectionState('CLOSED');
+    // 清理全局标记（仅当断开的就是当前会话时）
+    const w: any = window as any;
+    if (w.__wsActiveConvId === currentConversationId) {
+      w.__wsIsOpen = false;
+      w.__wsIsConnecting = false;
+      w.__wsActiveConvId = null;
+    }
   }, [isClient]);
 
   // 发送消息

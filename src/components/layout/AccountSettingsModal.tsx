@@ -13,6 +13,7 @@ const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({ open, onClo
   const [plan, setPlan] = useState<string>('');
   const [watermark, setWatermark] = useState(false);
   const [taskEmail, setTaskEmail] = useState(false);
+  const [notice, setNotice] = useState<string>('');
 
   useEffect(() => {
     if (!open) return;
@@ -20,30 +21,66 @@ const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({ open, onClo
     Promise.all([
       apiClient.getCustomerInfo(),
       apiClient.getCustomerPackage()
-    ]).then(([info, pkg]) => {
-      setCredits(info?.credits ?? 0);
-      setWatermark(info?.removeWatermark ?? false);
-      setTaskEmail(info?.taskCompletionEmail ?? false);
-      setPlan(pkg?.planName || pkg?.plan || 'Free Plan');
-    }).finally(() => setLoading(false));
+    ])
+      .then(([info, pkg]) => {
+        // 兼容后端返回 { code, data } 或直接返回数据两种格式
+        const unpack = (res: any) => (res && typeof res === 'object' && 'code' in res ? (res.code === 200 ? res.data : null) : res);
+
+        const infoData = unpack(info) || {};
+        const pkgData = unpack(pkg) || {};
+
+        setCredits(
+          typeof infoData.credits === 'number' ? infoData.credits : (info?.credits ?? 0)
+        );
+        setWatermark(
+          typeof infoData.removeWatermark === 'boolean' ? infoData.removeWatermark : (info?.removeWatermark ?? false)
+        );
+        setTaskEmail(
+          typeof infoData.taskCompletionEmail === 'boolean' ? infoData.taskCompletionEmail : (info?.taskCompletionEmail ?? false)
+        );
+        setPlan(
+          pkgData?.planName || pkgData?.plan || pkg?.planName || pkg?.plan || 'Free Plan'
+        );
+      })
+      .catch(() => {
+        setNotice('Failed to load account info.');
+      })
+      .finally(() => setLoading(false));
   }, [open]);
 
   const handleWatermarkToggle = async () => {
+    const prev = watermark;
+    setWatermark(!prev);
     try {
-      setWatermark(!watermark);
-      await apiClient.setWatermark(!watermark);
-    } catch {}
+      const resp = await apiClient.setWatermark(!prev);
+      // 兼容 {code,data} 结构失败时回滚
+      if (resp && typeof resp === 'object' && 'code' in resp && resp.code !== 200) {
+        throw new Error('Request failed');
+      }
+      setNotice('');
+    } catch (e) {
+      setWatermark(prev);
+      setNotice('Failed to update watermark setting.');
+    }
   };
 
   const handleTaskEmailToggle = async () => {
+    const prev = taskEmail;
+    setTaskEmail(!prev);
     try {
-      setTaskEmail(!taskEmail);
-      await apiClient.updateNotificationPreferences({
+      const resp = await apiClient.updateNotificationPreferences({
         channel: 'email',
-        enabled: !taskEmail,
+        enabled: !prev,
         notificationType: 'task_completion',
       });
-    } catch {}
+      if (resp && typeof resp === 'object' && 'code' in resp && resp.code !== 200) {
+        throw new Error('Request failed');
+      }
+      setNotice('');
+    } catch (e) {
+      setTaskEmail(prev);
+      setNotice('Failed to update notification preference.');
+    }
   };
 
   if (!open) return null;
@@ -71,6 +108,9 @@ const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({ open, onClo
         <div className="text-center text-gray-400 py-12">Loading...</div>
       ) : (
         <>
+          {notice && (
+            <div className="mb-3 text-sm text-red-500">{notice}</div>
+          )}
           <div className="bg-gray-50 rounded-xl p-4 mb-6">
             <div className="flex items-center justify-between mb-1">
               <span className="font-semibold text-gray-800">Credits Usage</span>
@@ -80,7 +120,9 @@ const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({ open, onClo
               <span className="text-2xl font-bold text-orange-500">{credits ?? 0}</span>
               <span className="text-gray-500">Available Credits</span>
             </div>
-            <div className="text-xs text-gray-400 mt-1">Approximately can generate 5 pages</div>
+            <div className="text-xs text-gray-400 mt-1">
+              Approximately can generate {(credits ?? 0)} pages
+            </div>
           </div>
           <div className="mb-4 flex items-center justify-between">
             <div>

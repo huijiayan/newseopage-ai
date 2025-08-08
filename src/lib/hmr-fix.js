@@ -51,42 +51,15 @@ if (typeof window !== 'undefined' && module.hot) {
     }
   });
   
-  // 自定义HMR accept处理
+  // 自定义HMR accept处理 - 移除对cssinjs模块的过滤
   const originalAccept = module.hot.accept;
   module.hot.accept = function(dependencies, callback) {
-    // 过滤掉cssinjs相关的依赖
-    if (Array.isArray(dependencies)) {
-      const filteredDependencies = dependencies.filter(dep => 
-        !dep.includes('@ant-design/cssinjs') && 
-        !dep.includes('cssinjs') &&
-        !dep.includes('useHMR') &&
-        !dep.includes('useGlobalCache') &&
-        !dep.includes('useCacheToken')
-      );
-      
-      if (filteredDependencies.length !== dependencies.length) {
-        console.log('🔧 过滤掉cssinjs相关的HMR依赖');
-      }
-      
-      return originalAccept.call(this, filteredDependencies, callback);
-    }
-    
+    // 不再过滤cssinjs相关的依赖，让它们正常工作
     return originalAccept.call(this, dependencies, callback);
   };
   
-  // 禁用特定模块的热重载
-  try {
-    module.hot.decline('./node_modules/@ant-design/cssinjs/es/hooks/useHMR.js');
-    module.hot.decline('./node_modules/@ant-design/cssinjs/es/hooks/useGlobalCache.js');
-    module.hot.decline('./node_modules/@ant-design/cssinjs/es/hooks/useCacheToken.js');
-    module.hot.decline('./node_modules/@ant-design/cssinjs/es/extractStyle.js');
-    module.hot.decline('./node_modules/@ant-design/cssinjs/es/index.js');
-    console.log('🔧 已禁用cssinjs模块的热重载');
-  } catch (error) {
-    console.warn('🔧 禁用cssinjs模块热重载时出错:', error.message);
-  }
-  
-  console.log('🔧 HMR修复已初始化完成');
+  // 移除对cssinjs模块的禁用
+  console.log('🔧 HMR修复已初始化完成 - 允许cssinjs模块正常工作');
 }
 
 // 导出空对象以避免模块解析问题

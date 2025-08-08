@@ -86,10 +86,15 @@ const isVercel = typeof window !== 'undefined' && (
   window.location.hostname.includes('newseopage-ai.vercel.app')
 );
 
-// const API_URL = 'https://api.websitelm.com/v1';
-// const API_URL = 'http://api.zhuyuejoey.com/v1';
 const CHAT_API_URL = process.env.NEXT_PUBLIC_CHAT_API_URL || 'https://agents.zhuyuejoey.com'; // 聊天服务器地址
-const API_URL = isVercel ? '/api/v1' : (process.env.NEXT_PUBLIC_API_URL || 'https://api.websitelm.com/v1'); // 主API服务器地址
+// 在 Vercel 环境下通过同源路径走 Next.js rewrite 到后端，避免浏览器 CORS
+// 其他环境（本地、独立部署）仍然使用环境变量指向真实后端
+const API_URL = (typeof window !== 'undefined' && (
+  window.location.hostname.includes('vercel.app') ||
+  window.location.hostname.includes('newseopage-ai')
+))
+  ? '/api/v1'
+  : (process.env.NEXT_PUBLIC_API_URL || 'https://api.websitelm.com/v1'); // 主API服务器地址
 const CHAT_WS_URL = process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuejoey.com'; // WebSocket服务器地址
 
 // 调试信息
@@ -473,26 +478,24 @@ const getCustomerPackage = async () => {
   }
 };
 
-// 获取聊天历史记录 - 使用主API服务器（聊天服务器暂时不可用）
+// 获取聊天历史记录
+// 说明：之前指向聊天服务端的 `/api/chat/history` 在当前环境返回 404。
+// 为了稳定性，优先走主业务 API 的 `/alternatively/chat/list`，
+// 如主 API 不可用再兜底尝试聊天服务端（以兼容未来可能恢复的端点）。
 const getAlternativeChatHistory = async (conversationId: any) => {
   try {
-    // 首先尝试使用主API服务器的聊天历史接口
     const response = await apiClient.get('/alternatively/chat/list', {
-      params: { conversationId, page: 1, limit: 200 }
+      params: { conversationId },
     });
     return response.data;
-  } catch (error) {
-    console.error('Failed to get chat history from main API:', error);
-    
-    // 如果主API也失败，尝试使用聊天服务器作为备用
+  } catch (primaryError) {
     try {
       const chatResponse = await chatApiClient.get('/api/chat/history', {
-        params: { conversationId }
+        params: { conversationId },
       });
       return chatResponse.data;
-    } catch (chatError) {
-      console.error('Failed to get chat history from chat API:', chatError);
-      throw error; // 抛出原始错误
+    } catch (fallbackError) {
+      throw primaryError;
     }
   }
 };
@@ -962,7 +965,8 @@ const getWebsiteSitemap = async (websiteId: any) => {
 // 获取聊天历史列表 - 使用主API服务器
 const getChatHistoryList = async (conversationId: any, page: any, limit: any) => {
   try {
-    const params: any = { conversationId };
+    const params: any = {};
+    if (conversationId) params.conversationId = conversationId;
     if (page !== undefined) params.page = page;
     if (limit !== undefined) params.limit = limit;
     
@@ -1055,10 +1059,10 @@ const deleteCustomerHubPageEntry = async (hubPageId: any) => {
 
 // 在现有接口之后添加以下新接口
 
-// 1. 获取GSC授权链接
+// 1. 获取GSC授权链接（主服务器固定路径前缀 /gsc）
 const gscAuth = async (customerId: any) => {
   try {
-    const response = await apiClient.get('/auth', { params: { customerId } });
+    const response = await apiClient.get('/gsc/auth', { params: { customerId } });
     return response.data;
   } catch (error) {
     console.error('GSC auth failed:', error);
@@ -1069,7 +1073,7 @@ const gscAuth = async (customerId: any) => {
 // 2. 处理GSC回调
 const gscCallback = async (code: any) => {
   try {
-    const response = await apiClient.get('/callback', { params: { code } });
+    const response = await apiClient.get('/gsc/callback', { params: { code } });
     return response.data;
   } catch (error) {
     console.error('GSC callback failed:', error);
@@ -1080,7 +1084,7 @@ const gscCallback = async (code: any) => {
 // 3. 检查GSC授权状态
 const checkGscAuth = async (customerId: any) => {
   try {
-    const response = await apiClient.get('/sites/check', { 
+    const response = await apiClient.get('/gsc/sites/check', { 
       params: { customerId } 
     });
     return response.data;
@@ -1093,7 +1097,7 @@ const checkGscAuth = async (customerId: any) => {
 // 4. 取消GSC授权
 const cancelGscAuth = async () => {
   try {
-    const response = await apiClient.delete('/auth/cancel');
+    const response = await apiClient.delete('/gsc/auth/cancel');
     return response.data;
   } catch (error) {
     console.error('Failed to cancel GSC OAuth:', error);
@@ -1104,7 +1108,7 @@ const cancelGscAuth = async () => {
 // 5. 获取GSC站点数据
 const getGscSites = async (customerId: any) => {
   try {
-    const response = await apiClient.get('/sites', { 
+    const response = await apiClient.get('/gsc/sites', { 
       params: { customerId } 
     });
     return response.data;
@@ -1118,7 +1122,7 @@ const getGscSites = async (customerId: any) => {
 const getSiteAnalytics = async (params: any = {}) => {
   try {
     const { startDate, endDate, dimensions, queryURL } = params as any;
-    const response = await apiClient.get('/sites/analytics', {
+    const response = await apiClient.get('/gsc/sites/analytics', {
       params: {
         startDate,
         endDate,
