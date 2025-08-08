@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // 生产环境优化
-  output: 'standalone',
+  // 生产环境优化 - 移除 standalone 配置，与 Vercel 兼容
+  // output: 'standalone', // 注释掉，避免与 Vercel 冲突
   
   // 图片优化
   images: {
