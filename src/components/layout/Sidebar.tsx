@@ -125,11 +125,27 @@ const SidebarContent = () => {
       }
 
       setChatLoading(true);
-      const allChats: ChatItem[] = [];
-      
+      // 从后端获取聊天历史列表（不带 conversationId，支持分页）
+      const page = 1;
+      const limit = 50;
+      let allChats: ChatItem[] = [];
+      try {
+        const resp = await apiClient.getChatHistoryList(undefined as any, page, limit);
+        const list = Array.isArray(resp?.data) ? resp.data : (Array.isArray(resp) ? resp : (Array.isArray(resp?.records) ? resp.records : []));
+        allChats = list.map((item: any) => ({
+          conversationId: item?.conversationId || item?.id || '',
+          websiteUrl: item?.websiteUrl || item?.url || item?.title || '',
+          chatType: item?.chatType || getCurrentChatType(),
+          createdAt: item?.createdAt || item?.created_at || item?.timestamp || new Date().toISOString(),
+          generatorIds: Array.isArray(item?.generatorIds) ? item.generatorIds : undefined,
+        })).filter((c: ChatItem) => typeof c.conversationId === 'string' && c.conversationId.length > 0);
+      } catch (e) {
+        console.error('加载聊天历史失败:', e);
+      }
+
+      // 根据当前页面类型过滤
       const currentChatType = getCurrentChatType();
       const filteredChats = allChats.filter((chat: ChatItem) => chat.chatType === currentChatType);
-      
       setChatList(filteredChats);
     } catch (error) {
       console.error('Failed to load chat list:', error);
@@ -539,8 +555,9 @@ const SidebarContent = () => {
                         {group.chats.map((chat) => (
                           <div 
                             key={chat.conversationId} 
-                            className="p-3 bg-gray-50 dark:bg-gray-800 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-300 border border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500"
-                            onClick={() => handleRestoreChat(chat)}
+                            className="p-3 bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-600"
+                            aria-disabled="true"
+                            title="History click disabled"
                           >
                             <div className="flex items-start justify-between">
                               <div className="flex-1 min-w-0">

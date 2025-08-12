@@ -192,7 +192,6 @@ export class MessageHandler {
 
   // 处理WebSocket消息 - 简化功能
   handleWebSocketMessage(data: any): void {
-    console.log('🔍 处理WebSocket消息:', data);
     
     if (data.type === 'message' && data.content) {
       const thinkingMessageId = `thinking-${Date.now()}`;
@@ -202,13 +201,6 @@ export class MessageHandler {
     } else if (data.type === 'error') {
       this.addSystemMessage(`⚠️ ${data.content || '发生错误'}`);
     }
-    // 注释掉竞品搜索、sitemap状态、任务状态的处理
-    // else if (data.type === 'competitor_search') {
-    //   this.handleCompetitorSearchUpdate(data);
-    // } else if (data.type === 'sitemap_status') {
-    //   this.handleSitemapStatusUpdate(data);
-    // } else if (data.type === 'task_status') {
-    //   this.handleTaskStatusUpdate(data);
-    // }
+
   }
 }

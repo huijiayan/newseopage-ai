@@ -77,34 +77,30 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
   // 连接防抖和状态监控
   const connectionAttempts = useRef(0);
   const lastConnectionTime = useRef(0);
-  const connectionDebounceTimeout = useRef<NodeJS.Timeout | null>(null);
   
-  // 自动重连相关
-  const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
+  // 自动重连相关（委托给底层类），这里只保留手动触发接口
   const reconnectAttempts = useRef(0);
-  const isReconnecting = useRef(false);
-  const shouldReconnect = useRef(enableAutoReconnect);
-  
-  // 连接健康检查
-  const healthCheckInterval = useRef<NodeJS.Timeout | null>(null);
-  const lastPingTime = useRef<number>(0);
+  // 心跳相关
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const heartbeatCountRef = useRef(0);
   
   // 生成消息ID用于去重
   const generateMessageId = useCallback((data: any): string => {
-    if (typeof data === 'string') {
-      return data;
-    }
+    // 放宽去重条件：仅当有稳定标识时才返回键，否则返回空串表示“不去重”
     if (data && typeof data === 'object') {
-      // 尝试从消息中提取唯一标识
-      if (data.id) return data.id;
-      if (data.messageId) return data.messageId;
-      if (data.timestamp && data.content) {
-        return `${data.timestamp}_${data.content.substring(0, 50)}`;
+      if (typeof (data as any).id === 'string' && (data as any).id.length > 0) return (data as any).id;
+      if (typeof (data as any).messageId === 'string' && (data as any).messageId.length > 0) return (data as any).messageId;
+      if (typeof (data as any).timestamp === 'string' && typeof (data as any).content === 'string') {
+        return `${(data as any).timestamp}_${(data as any).content.substring(0, 50)}`;
       }
-      // 如果没有明显标识，使用JSON字符串的hash
-      return JSON.stringify(data).slice(0, 100);
+      if (
+        typeof (data as any)?.payload?.timestamp === 'string' &&
+        typeof (data as any)?.content === 'string'
+      ) {
+        return `${(data as any).payload.timestamp}_${(data as any).content.substring(0, 50)}`;
+      }
     }
-    return String(data);
+    return '';
   }, []);
   
   // 处理消息队列 - 简化逻辑
@@ -120,85 +116,86 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
         const queuedData = messageQueue.current.shift();
         if (queuedData) {
           const messageId = generateMessageId(queuedData);
-          if (!processedMessages.current.has(messageId)) {
+          if (messageId) {
+            if (processedMessages.current.has(messageId)) {
+              continue;
+            }
             processedMessages.current.add(messageId);
-            onMessage?.(queuedData);
           }
+          onMessage?.(queuedData);
+          if (typeof window !== 'undefined') {
+            lastMessageTime.current = Date.now();
+          }
+          try {
+            const extractTs = (data: any): string | null => {
+              try {
+                if (!data) return null;
+                if (typeof data === 'string') {
+                  try {
+                    const obj = JSON.parse(data);
+                    return (
+                      (typeof obj?.timestamp === 'string' && obj.timestamp) ||
+                      (typeof obj?.ts === 'number' && String(obj.ts)) ||
+                      (typeof obj?.payload?.timestamp === 'string' && obj.payload.timestamp) ||
+                      null
+                    );
+                  } catch {
+                    return null;
+                  }
+                }
+                if (typeof data === 'object') {
+                  return (
+                    (typeof data?.timestamp === 'string' && data.timestamp) ||
+                    (typeof data?.ts === 'number' && String(data.ts)) ||
+                    (typeof data?.payload?.timestamp === 'string' && data.payload.timestamp) ||
+                    null
+                  );
+                }
+                return null;
+              } catch { return null; }
+            };
+            const plusOneTs = (ts: string): string => {
+              if (/^\d+$/.test(ts)) {
+                const n = Number(ts);
+                return String(Number.isFinite(n) ? n + 1 : ts);
+              }
+              const ms = Date.parse(ts);
+              if (!Number.isNaN(ms)) {
+                return new Date(ms + 1).toISOString();
+              }
+              return ts;
+            };
+            const ts = extractTs(queuedData);
+            if (ts && conversationId) {
+              const key = `ws_resume_ts_${conversationId}`;
+              const prev = localStorage.getItem(key);
+              const next = plusOneTs(ts);
+              const prevMs = prev && !/^\d+$/.test(prev) ? Date.parse(prev) : Number(prev);
+              const nextMs = !/^\d+$/.test(next) ? Date.parse(next) : Number(next);
+              const okPrev = typeof prevMs === 'number' && Number.isFinite(prevMs);
+              const okNext = typeof nextMs === 'number' && Number.isFinite(nextMs);
+              if ((okNext && !okPrev) || (okNext && okPrev && nextMs >= prevMs)) {
+                localStorage.setItem(key, next);
+              }
+            }
+          } catch {}
         }
       }
       isProcessing.current = false;
     }, 20);
   }, [generateMessageId, onMessage]);
 
-  // 清理重连定时器
-  const clearReconnectTimer = useCallback(() => {
-    if (reconnectTimer.current) {
-      clearTimeout(reconnectTimer.current);
-      reconnectTimer.current = null;
-    }
-  }, []);
-
-  // 清理健康检查定时器
-  const clearHealthCheckTimer = useCallback(() => {
-    if (healthCheckInterval.current) {
-      clearInterval(healthCheckInterval.current);
-      healthCheckInterval.current = null;
-    }
-  }, []);
-
-  // 启动健康检查
-  const startHealthCheck = useCallback(() => {
-    // 只在客户端执行
-    if (typeof window === 'undefined') return;
-    if (!enableAutoReconnect) return;
-    
-    clearHealthCheckTimer();
-    
-    healthCheckInterval.current = setInterval(() => {
-      if (isConnected && chatService) {
-        const now = Date.now();
-        // 如果超过30秒没有收到消息，认为连接可能有问题
-        if (now - lastMessageTime.current > 30000) {
-          console.log('🔍 WebSocket连接可能异常，尝试重连');
-          handleConnectionFailure('连接超时检测', new Error('连接超时'));
-        }
-      }
-    }, 10000); // 每10秒检查一次
-  }, [enableAutoReconnect, isConnected, chatService, clearHealthCheckTimer]);
-
   // 处理连接失败
   const handleConnectionFailure = useCallback((reason: string, error: any) => {
-    console.log(`🔍 WebSocket连接失败: ${reason}`, error);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🔍 WebSocket连接失败: ${reason}`, error);
+    }
     
     setError(error?.message || reason);
     setIsConnected(false);
     setConnectionState('CLOSED');
     onError?.(error);
-    
-    // 如果启用自动重连且未达到最大重连次数，则尝试重连
-    if (shouldReconnect.current && reconnectAttempts.current < maxReconnectAttempts) {
-      scheduleReconnect();
-    }
   }, [maxReconnectAttempts, onError]);
-
-  // 安排重连
-  const scheduleReconnect = useCallback(() => {
-    if (isReconnecting.current) return;
-    
-    isReconnecting.current = true;
-    reconnectAttempts.current++;
-    
-    const delay = Math.min(reconnectDelay * Math.pow(2, reconnectAttempts.current - 1), 30000);
-    console.log(`🔍 安排重连 (${reconnectAttempts.current}/${maxReconnectAttempts})，延迟: ${delay}ms`);
-    
-    clearReconnectTimer();
-    reconnectTimer.current = setTimeout(() => {
-      isReconnecting.current = false;
-      if (shouldReconnect.current && conversationId) {
-        connect();
-      }
-    }, delay);
-  }, [reconnectDelay, maxReconnectAttempts, conversationId, clearReconnectTimer]);
 
   // 连接WebSocket
   const connect = useCallback(async () => {
@@ -212,7 +209,7 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
       return;
     }
     
-    // 连接防抖 - 简化逻辑
+      // 连接防抖 - 简化逻辑
     // 只在客户端执行
     if (typeof window === 'undefined') return;
     const now = Date.now();
@@ -227,52 +224,42 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
       lastConnectionTime.current = now;
       connectionAttempts.current++;
 
-      // 只保留关键连接建立提示
-      console.log('WebSocket连接已建立');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('尝试建立 WebSocket 连接');
+        }
 
       const service = await connectWebSocketChatV2(
         conversationId,
         (data: any) => {
-          // 消息去重处理
-          const messageId = generateMessageId(data);
-          if (processedMessages.current.has(messageId)) {
-            return;
-          }
-          
-          // 标记消息已处理
-          processedMessages.current.add(messageId);
-          // 只在客户端执行
-          if (typeof window !== 'undefined') {
-            lastMessageTime.current = Date.now();
-          }
-          
-          // 传递消息给父组件
-          onMessage?.(data);
+          // 入队并批处理，降低渲染频率且统一处理去重/断点续传时间
+          messageQueue.current.push(data);
+          processMessageQueue();
         },
         (error: any) => {
           handleConnectionFailure('连接错误', error);
         },
         (event: CloseEvent) => {
-          console.log('🔍 WebSocket连接关闭:', event.code, event.reason);
+            if (process.env.NODE_ENV === 'development') {
+              console.log('🔍 WebSocket连接关闭:', event.code, event.reason);
+            }
+          // 停止心跳
+          if (heartbeatIntervalRef.current) {
+            clearInterval(heartbeatIntervalRef.current);
+            heartbeatIntervalRef.current = null;
+          }
           setIsConnected(false);
           setConnectionState('CLOSED');
           onClose?.(event);
-          
-          // 如果不是正常关闭，尝试重连
-          if (event.code !== 1000 && shouldReconnect.current) {
-            handleConnectionFailure('连接异常关闭', new Error(`连接关闭: ${event.code} - ${event.reason}`));
-          }
         },
         () => {
-          console.log('🔍 WebSocket连接成功');
+            if (process.env.NODE_ENV === 'development') {
+              console.log('🔍 WebSocket连接成功');
+            }
           setIsConnected(true);
           setConnectionState('OPEN');
           setError(null);
           reconnectAttempts.current = 0; // 重置重连计数
           onOpen?.();
-          
-          // 启动健康检查
-          startHealthCheck();
         },
         domain
       );
@@ -280,41 +267,41 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
       setChatService(service);
       setIsConnecting(false);
     } catch (error: any) {
-      console.error('🔍 WebSocket连接失败:', error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('🔍 WebSocket连接失败:', error);
+        }
       handleConnectionFailure('连接失败', error);
       setIsConnecting(false);
     }
-  }, [conversationId, domain, onMessage, onError, onClose, onOpen, handleConnectionFailure, startHealthCheck]);
+    }, [conversationId, domain, onMessage, onError, onClose, onOpen, handleConnectionFailure]);
 
   // 手动重连
   const reconnect = useCallback(() => {
-    console.log('🔍 手动重连');
-    reconnectAttempts.current = 0; // 重置重连计数
-    shouldReconnect.current = true;
-    
-    if (chatService) {
-      chatService.disconnect();
-      setChatService(null);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 手动重连');
     }
-    
-    setIsConnected(false);
-    setConnectionState('CLOSED');
-    setError(null);
-    
-    // 延迟一下再连接，避免立即重连
-    setTimeout(() => {
+    reconnectAttempts.current = 0; // 重置重连计数
+    // 直接委托给底层类
+    if (chatService) {
+      chatService.reconnect();
+    } else {
+      // 若尚未创建实例，则触发一次 connect
       connect();
-    }, 1000);
+    }
   }, [chatService, connect]);
 
   // 断开连接
   const disconnect = useCallback(() => {
     if (chatService) {
-      console.log('🔍 断开WebSocket连接');
-      shouldReconnect.current = false; // 禁用自动重连
-      clearReconnectTimer();
-      clearHealthCheckTimer();
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 断开WebSocket连接');
+      }
       
+      // 停止心跳
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
       chatService.disconnect();
       setChatService(null);
       setIsConnected(false);
@@ -325,19 +312,24 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
       connectionAttempts.current = 0;
       lastConnectionTime.current = 0;
       reconnectAttempts.current = 0;
-      isReconnecting.current = false;
+      // 清空去重集合与队列
+      processedMessages.current.clear();
+      messageQueue.current.length = 0;
+      isProcessing.current = false;
     }
-  }, [chatService, clearReconnectTimer, clearHealthCheckTimer]);
+  }, [chatService]);
 
   // 强制断开连接（用于没有conversationId时）
   const forceDisconnect = useCallback(() => {
     if (chatService || isConnected) {
-      shouldReconnect.current = false; // 禁用自动重连
-      clearReconnectTimer();
-      clearHealthCheckTimer();
       
       if (chatService) {
         chatService.disconnect();
+      }
+      // 停止心跳
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
       }
       setChatService(null);
       setIsConnected(false);
@@ -348,24 +340,35 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
       connectionAttempts.current = 0;
       lastConnectionTime.current = 0;
       reconnectAttempts.current = 0;
-      isReconnecting.current = false;
       processedMessages.current.clear();
       messageQueue.current.length = 0;
       isProcessing.current = false;
     }
-  }, [chatService, isConnected, clearReconnectTimer, clearHealthCheckTimer]);
+  }, [chatService, isConnected]);
 
   // 发送消息
   const sendMessage = useCallback((message: any) => {
-    if (chatService && isConnected) {
-      const success = chatService.sendChatMessage(JSON.stringify(message));
-      if (success) {
-        onSendMessage?.(message);
-      }
-      return success;
+    if (!chatService || !isConnected) return false;
+
+    let success = false;
+    if (typeof message === 'string') {
+      success = chatService.sendChatMessage(message);
+    } else if (message && typeof message === 'object' && typeof message.type === 'string') {
+      // 已是 ChatMessage 结构
+      success = chatService.sendMessage(message);
     } else {
-      return false;
+      // 业务负载对象，包裹为 ChatMessage
+      success = chatService.sendMessage({
+        type: 'message',
+        content: JSON.stringify(message),
+        timestamp: new Date().toISOString(),
+      } as any);
     }
+
+    if (success) {
+      onSendMessage?.(message);
+    }
+    return success;
   }, [chatService, isConnected, onSendMessage]);
 
   // 暴露方法给父组件
@@ -386,32 +389,48 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
     }
   }, [autoConnect, conversationId, isConnected, isConnecting, connect, forceDisconnect]);
   
-  // conversationId变化时的连接管理
-  useEffect(() => {
-    if (conversationId && !isConnected && !isConnecting) {
-      connect();
-    } else if (!conversationId && isConnected) {
-      forceDisconnect();
-    }
-  }, [conversationId, isConnected, isConnecting, connect, forceDisconnect]);
+  // 删除重复的自动连接副作用，避免双重触发
 
   // 清理
   useEffect(() => {
     return () => {
-      shouldReconnect.current = false;
-      clearReconnectTimer();
-      clearHealthCheckTimer();
-      
       if (chatService) {
         chatService.disconnect();
       }
       
+      // 停止心跳
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
       // 清理消息处理状态
       processedMessages.current.clear();
       messageQueue.current.length = 0;
       isProcessing.current = false;
     };
-  }, [chatService, clearReconnectTimer, clearHealthCheckTimer]);
+  }, [chatService]);
+
+  // 连接成功后启动心跳，断开时停止
+  useEffect(() => {
+    if (isConnected && chatService) {
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+      }
+      heartbeatCountRef.current = 0;
+      heartbeatIntervalRef.current = setInterval(() => {
+        heartbeatCountRef.current += 1;
+        try {
+          chatService.sendHeartbeat(heartbeatCountRef.current, 'astream_events');
+        } catch {}
+      }, 10000); // 10秒一次
+      return () => {
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current);
+          heartbeatIntervalRef.current = null;
+        }
+      };
+    }
+  }, [isConnected, chatService]);
   
   // 定期清理过期的消息ID，防止内存泄漏
   useEffect(() => {
@@ -517,22 +536,7 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
           </div>
         )}
         
-        {enableAutoReconnect && (
-          <div className={`${
-            isHydrated 
-              ? themeStyles.systemMessage?.text || 'text-slate-300' 
-              : 'text-slate-300'
-          }`}>
-            <span>自动重连: </span>
-            <span className={`${
-              isHydrated 
-                ? themeStyles.infoMessage?.text || 'text-blue-400'
-                : 'text-blue-400'
-            }`}>
-              已启用 ({reconnectAttempts.current}/{maxReconnectAttempts})
-            </span>
-          </div>
-        )}
+        {/* 组件层不再管理自动重连，仅显示基本状态 */}
         
         {error && (
           <div className={`p-3 rounded-md ${

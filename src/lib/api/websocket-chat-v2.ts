@@ -12,11 +12,14 @@ export interface WebSocketConfig {
 }
 
 export interface ChatMessage {
-  type: 'message' | 'system' | 'error';
-  content: string;
+  type: 'message' | 'system' | 'error' | 'heartbeat';
+  content?: string;
   timestamp: string;
   conversationId?: string;
   messageId?: string;
+  // 心跳扩展字段（仅当 type 为 heartbeat 使用）
+  execution_mode?: string;
+  heartbeat_count?: number;
 }
 
 export class WebSocketChatV2 {
@@ -44,16 +47,37 @@ export class WebSocketChatV2 {
 
   private getWebSocketUrl(): string {
     const baseUrl = process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuejoey.com';
-    const url = `${baseUrl}/ws/chat/${this.config.conversationId}?token=${this.config.token}`;
+    let url = `${baseUrl}/ws/chat/${this.config.conversationId}?token=${this.config.token}`;
+    
+    // 断点续传：携带上次消息时间戳（若存在）
+    try {
+      if (this.isClient()) {
+        const key = `ws_resume_ts_${this.config.conversationId}`;
+        let fromTs = localStorage.getItem(key);
+        if (fromTs && String(fromTs).length > 0) {
+          // 将边界改为独占：若是纯数字毫秒，则 +1；否则按 ISO 解析 +1ms
+          const plusOne = (ts: string): string => {
+            if (/^\d+$/.test(ts)) {
+              const n = Number(ts);
+              return String(Number.isFinite(n) ? n + 1 : ts);
+            }
+            const ms = Date.parse(ts);
+            if (!Number.isNaN(ms)) {
+              return new Date(ms + 1).toISOString();
+            }
+            return ts;
+          };
+          fromTs = plusOne(String(fromTs));
+          url += `&fromTs=${encodeURIComponent(String(fromTs))}&exclusive=1`;
+        }
+      }
+    } catch {}
     
     // 如果提供了域名，添加到URL参数中
     if (this.config.domain) {
       const finalUrl = `${url}&domain=${encodeURIComponent(this.config.domain)}`;
-      console.log('🔍 WebSocket URL with domain:', finalUrl);
       return finalUrl;
     }
-    
-    console.log('🔍 WebSocket URL without domain:', url);
     return url;
   }
 
@@ -75,15 +99,12 @@ export class WebSocketChatV2 {
     this.reconnectAttempts++;
     
     const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000);
-    console.log(`🔍 安排重连 (${this.reconnectAttempts}/${this.maxReconnectAttempts})，延迟: ${delay}ms`);
     
     this.clearReconnectTimer();
     this.reconnectTimer = setTimeout(() => {
       this.isReconnecting = false;
       if (this.shouldReconnect) {
-        this.connect().catch(error => {
-          console.error('🔍 重连失败:', error);
-        });
+        this.connect().catch(() => {});
       }
     }, delay);
   }
@@ -116,7 +137,6 @@ export class WebSocketChatV2 {
         }, 10000); // 10秒超时
 
         this.websocket.onopen = () => {
-          console.log('🔍 WebSocket连接成功');
           this.isConnected = true;
           this.isConnecting = false;
           this.reconnectAttempts = 0; // 重置重连计数
@@ -140,10 +160,7 @@ export class WebSocketChatV2 {
               
               // 发送域名信息消息
               this.websocket?.send(JSON.stringify(domainMessage));
-              console.log('🔍 域名信息已自动发送:', this.config.domain);
-            } catch (error) {
-              console.warn('🔍 发送域名信息失败:', error);
-            }
+            } catch {}
           }
           
           this.config.onOpen?.();
@@ -151,22 +168,11 @@ export class WebSocketChatV2 {
         };
 
         this.websocket.onmessage = (event) => {
-          // 减少日志输出，避免控制台刷屏
+          // 仅转发原始数据，不做JSON解析
           if (process.env.NODE_ENV === 'development') {
-            console.log('🔍 WebSocket V2 收到消息:', event.data);
+            console.log('🔍 WebSocket V2 收到原始消息:', event.data);
           }
-          
-          // 尝试解析JSON，如果失败则传递原始数据
-          try {
-            const data = JSON.parse(event.data);
-            this.config.onMessage?.(data);
-          } catch (error) {
-            // 只在开发环境下输出解析错误
-            if (process.env.NODE_ENV === 'development') {
-              console.log('🔍 JSON解析失败，传递原始数据:', event.data);
-            }
-            this.config.onMessage?.(event.data);
-          }
+          this.config.onMessage?.(event.data);
         };
 
         this.websocket.onerror = (error) => {
@@ -218,7 +224,6 @@ export class WebSocketChatV2 {
   public disconnect(): void {
     if (!this.isClient()) return;
 
-    console.log('🔍 手动断开WebSocket连接');
     
     // 禁用自动重连
     this.shouldReconnect = false;
@@ -254,7 +259,6 @@ export class WebSocketChatV2 {
 
   // 手动重连
   public reconnect(): void {
-    console.log('🔍 手动重连');
     this.reconnectAttempts = 0;
     this.shouldReconnect = true;
     
@@ -268,28 +272,23 @@ export class WebSocketChatV2 {
     
     // 延迟一下再连接
     setTimeout(() => {
-      this.connect().catch(error => {
-        console.error('🔍 手动重连失败:', error);
-      });
+      this.connect().catch(() => {});
     }, 1000);
   }
 
   public sendMessage(message: ChatMessage): boolean {
     if (!this.isClient()) {
-      console.warn('🔍 WebSocket只在客户端可用');
       return false;
     }
 
     if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
-      console.warn('🔍 WebSocket未连接');
       return false;
     }
 
     try {
       this.websocket.send(JSON.stringify(message));
       return true;
-    } catch (error) {
-      console.error('🔍 发送WebSocket消息失败:', error);
+    } catch {
       return false;
     }
   }
@@ -302,6 +301,30 @@ export class WebSocketChatV2 {
       messageId
     };
     return this.sendMessage(message);
+  }
+
+  // 发送原始JSON对象（用于心跳等自定义协议）
+  public sendRaw(payload: any): boolean {
+    if (!this.isClient()) return false;
+    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) return false;
+    try {
+      this.websocket.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // 发送心跳
+  public sendHeartbeat(count: number, executionMode: string = 'astream_events'): boolean {
+    const payload: ChatMessage = {
+      type: 'heartbeat',
+      execution_mode: executionMode,
+      heartbeat_count: count,
+      timestamp: new Date().toISOString(),
+      conversationId: this.config.conversationId,
+    };
+    return this.sendRaw(payload);
   }
 
   public isConnectionOpen(): boolean {
@@ -366,16 +389,7 @@ export const connectWebSocketChatV2 = async (
 
   const token = localStorage.getItem('alternativelyAccessToken');
   
-  console.log('🔍 WebSocket连接参数检查:', {
-    conversationId,
-    domain,
-    hasToken: !!token,
-    tokenLength: token?.length || 0,
-    hasDomain: !!domain,
-  });
-  
   if (!token) {
-    console.error('🔍 缺少访问令牌，请先登录');
     throw new Error('缺少访问令牌，请先登录');
   }
 

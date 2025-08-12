@@ -86,10 +86,53 @@ const isVercel = typeof window !== 'undefined' && (
   window.location.hostname.includes('newseopage-ai.vercel.app')
 );
 
-const CHAT_API_URL = process.env.NEXT_PUBLIC_CHAT_API_URL || 'https://agents.zhuyuejoey.com'; // 聊天服务器地址
-// 直接使用环境变量或默认主服务器地址，不再通过本地 /api/v1 代理
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.websitelm.com/v1'; // 主API服务器地址
-const CHAT_WS_URL = process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuejoey.com'; // WebSocket服务器地址
+// 环境配置 - 优先使用环境变量，否则根据当前域名自动判断
+const getEnvironmentConfig = () => {
+  // 如果环境变量已设置，直接使用
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return {
+      apiUrl: process.env.NEXT_PUBLIC_API_URL,
+      chatApiUrl: process.env.NEXT_PUBLIC_CHAT_API_URL || 'https://agents.zhuyuejoey.com',
+      chatWsUrl: process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuejoey.com'
+    };
+  }
+
+  // 根据域名自动判断环境
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    
+    // 测试环境域名
+    if (hostname.includes('localhost') || hostname.includes('127.0.0.1') || hostname.includes('test')) {
+      return {
+        apiUrl: 'https://api.zhuyuejoey.com/v1',
+        chatApiUrl: 'https://agents.zhuyuejoey.com',
+        chatWsUrl: 'wss://agents.zhuyuejoey.com'
+      };
+    }
+    
+    // 生产环境域名 - 暂时使用测试环境API
+    if (hostname.includes('websitelm.com') || hostname.includes('seopage.ai') || hostname.includes('bestpage.ai')) {
+      return {
+        apiUrl: 'https://api.zhuyuejoey.com/v1',
+        chatApiUrl: 'https://agents.zhuyuejoey.com',
+        chatWsUrl: 'wss://agents.zhuyuejoey.com'
+      };
+    }
+  }
+
+  // 默认使用测试环境
+  return {
+    apiUrl: 'https://api.zhuyuejoey.com/v1',
+    chatApiUrl: 'https://agents.zhuyuejoey.com',
+    chatWsUrl: 'wss://agents.zhuyuejoey.com'
+  };
+};
+
+const envConfig = getEnvironmentConfig();
+
+const CHAT_API_URL = envConfig.chatApiUrl;
+const API_URL = envConfig.apiUrl;
+const CHAT_WS_URL = envConfig.chatWsUrl;
 
 // 调试信息
 if (typeof window !== 'undefined') {
@@ -299,6 +342,8 @@ const searchCompetitor = async (conversationId: any, website: any) => {
   }
 };
 
+
+
 // 生成替代方案
 const generateAlternative = async (conversationId: any, hubPageIds: any, websiteId: any) => {
   try {
@@ -479,24 +524,16 @@ const getCustomerPackage = async () => {
 };
 
 // 获取聊天历史记录
-// 说明：之前指向聊天服务端的 `/api/chat/history` 在当前环境返回 404。
-// 为了稳定性，优先走主业务 API 的 `/alternatively/chat/list`，
-// 如主 API 不可用再兜底尝试聊天服务端（以兼容未来可能恢复的端点）。
-const getAlternativeChatHistory = async (conversationId: any) => {
-  try {
-    const response = await apiClient.get('/alternatively/chat/list', {
-      params: { conversationId },
+
+  const getAlternativeChatHistory = async (conversationid :any) => {
+    try {
+    const response = await apiClient.get(`/chat/history/${conversationid}`, {
+      params: { conversationid }
     });
     return response.data;
-  } catch (primaryError) {
-    try {
-      const chatResponse = await chatApiClient.get('/api/chat/history', {
-        params: { conversationId },
-      });
-      return chatResponse.data;
-    } catch (fallbackError) {
-      throw primaryError;
-    }
+  } catch (error) {
+    console.error('Failed to get chat history:', error);
+    throw error;
   }
 };
 
@@ -966,10 +1003,13 @@ const getWebsiteSitemap = async (websiteId: any) => {
   }
 };
 
-// 获取聊天历史列表 - 使用主API服务器
+// 获取聊天历史列表 - 使用主API服务器（conversationId 可选，不传则不携带该参数）
 const getChatHistoryList = async (conversationId: any, page: any, limit: any) => {
   try {
-    const params: any = { conversationId };
+    const params: any = {};
+    if (conversationId !== undefined && conversationId !== null && conversationId !== '') {
+      params.conversationId = conversationId;
+    }
     if (page !== undefined) params.page = page;
     if (limit !== undefined) params.limit = limit;
     

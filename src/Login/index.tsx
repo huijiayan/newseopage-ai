@@ -96,33 +96,6 @@ export default function AuthManager(props: AuthManagerProps) {
     return 'alternatively';
   };
 
-  const handleGoogleLoginClick = async () => {
-    console.log('handleGoogleLoginClick called');
-    let invitationCode: string | undefined = undefined;
-    try {
-      const code = localStorage.getItem('invitationCode');
-      invitationCode = code === null ? undefined : code;
-    } catch (e) {
-      invitationCode = undefined;
-    }
-    try {
-      console.log('before setGoogleLoading true');
-      setLoading(true); // 开始loading
-      console.log('before handleGoogleLogin');
-      await handleGoogleLogin(); // 调用父组件传进来的 Google 登录逻辑
-      if (invitationCode) {
-        try {
-          localStorage.removeItem('invitationCode');
-        } catch (e) {}
-      }
-    } catch (e: any) {
-      // 可以加错误提示
-    }
-    finally {
-      console.log('before setGoogleLoading false');
-      setLoading(false); // 结束loading
-    }
-  };
 
   const handleGoogleLogin = async () => {
     console.log('handleGoogleLogin called');
@@ -172,84 +145,8 @@ export default function AuthManager(props: AuthManagerProps) {
     }
   };
 
-  const handleGoogleOneTapSuccess = useCallback(async (response: any) => {
-    const key = 'googleOneTap';
-    try {
-      message.loading('Authenticating...');
-      const res = await apiClient.googleOneTapLogin(response.credential);
-      localStorage.setItem('alternativelyAccessToken', res.accessToken);
-      localStorage.setItem('alternativelyIsLoggedIn', 'true');
-      localStorage.setItem('alternativelyCustomerEmail', res.data.email);
-      localStorage.setItem('alternativelyCustomerId', res.data.customerId);
-      if (res.data.firstLogin) {
-        window.dataLayer = window.dataLayer || [];
-        window.dataLayer.push({
-          'event': 'custom_event_signup_success',
-          'registration_method': 'google_one_tap',
-          'user_id': response.data.customerId,
-        });
-      }
-      setIsLoggedIn(true);
-      setUserEmail(res.data.email);
-      setAppUserEmail(res.data.email);
-      message.success('Login successful!');
-      setShowLoginModal(false);
-      window.dispatchEvent(new CustomEvent('alternativelyLoginSuccess'));
-      
-      // 登录成功后刷新页面
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
-    } catch (error: any) {
-      console.error('Google One Tap login failed:', error);
-      message.error(error.response?.data?.error || 'Authentication failed');
-    } finally {
-      message.destroy();
-    }
-  }, [setShowLoginModal, setUserEmail, setAppUserEmail]);
 
-  // Google One Tap 初始化已移至Header组件，避免重复初始化导致 FedCM AbortError
-  // useEffect(() => {
-  //   let googleScript: HTMLScriptElement | null = null;
-  //   const initializeOneTap = () => {
-  //     if (!window.google || isLoggedInRef.current || isOneTapShown) return;
-  //     window.google.accounts.id.initialize({
-  //       client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
-  //       callback: handleGoogleOneTapSuccess,
-  //       cancel_on_tap_outside: false,
-  //       prompt_parent_id: "google-one-tap-button"
-  //     });
-  //     window.google.accounts.id.prompt((notification: any) => {
-  //       if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-  //         setIsOneTapShown(true);
-  //       }
-  //     });
-  //   };
-  //   const loadGoogleScript = () => {
-  //     if (isLoggedInRef.current) return;
-  //     if (!document.querySelector('#google-one-tap-script')) {
-  //       googleScript = document.createElement('script');
-  //       googleScript.id = 'google-one-tap-script';
-  //       googleScript.src = 'https://accounts.google.com/gsi/client';
-  //       googleScript.async = true;
-  //       googleScript.defer = true;
-  //       googleScript.onload = () => {
-  //         if (!isLoggedInRef.current) initializeOneTap();
-  //       };
-  //       document.head.appendChild(googleScript);
-  //     } else {
-  //       initializeOneTap();
-  //     }
-  //   };
-  //   if (!isLoggedInRef.current) loadGoogleScript();
-  //   return () => {
-  //     if (googleScript) googleScript.remove();
-  //     if (window.google && window.google.accounts && window.google.accounts.id) {
-  //       window.google.accounts.id.cancel();
-  //     }
-  //   };
-  // }, [isLoggedIn, isOneTapShown, handleGoogleOneTapSuccess]);
-
+  
   const handleLoginSuccess = (userData: any) => {
     localStorage.setItem('alternativelyAccessToken', userData.accessToken);
     localStorage.setItem('alternativelyIsLoggedIn', 'true');

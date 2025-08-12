@@ -35,14 +35,18 @@ export class WebSocketService {
    */
   async connect(): Promise<void> {
     if (this.isConnecting || this.isConnected) {
-      console.log('🔍 WebSocket已连接或正在连接中，跳过重复连接');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 WebSocket已连接或正在连接中，跳过重复连接');
+      }
       return;
     }
 
     try {
       this.isConnecting = true;
       
-      console.log('🔍 开始连接WebSocket, 会话ID:', this.config.conversationId);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 开始连接WebSocket, 会话ID:', this.config.conversationId);
+      }
 
       this.chatService = await connectWebSocketChatV2(
         this.config.conversationId,
@@ -53,10 +57,14 @@ export class WebSocketService {
         this.config.domain // 传递域名参数
       );
 
-      console.log('🔍 WebSocket连接成功');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 WebSocket连接成功');
+      }
       this.isConnected = true;
     } catch (error: any) {
-      console.error('🔍 WebSocket连接失败:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('🔍 WebSocket连接失败:', error);
+      }
       this.isConnected = false;
       throw error;
     } finally {
@@ -68,7 +76,9 @@ export class WebSocketService {
    * 断开WebSocket连接
    */
   disconnect(): void {
-    console.log('🔍 断开WebSocket连接');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 断开WebSocket连接');
+    }
     
     if (this.chatService) {
       this.chatService.disconnect();
@@ -110,9 +120,11 @@ export class WebSocketService {
    * 处理接收到的消息
    */
   private handleMessage(data: any): void {
-    console.log('🔍 WebSocketService收到原始消息:', data);
-    console.log('🔍 消息类型:', typeof data);
-    console.log('🔍 消息结构:', JSON.stringify(data, null, 2));
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 WebSocketService收到原始消息:', data);
+      console.log('🔍 消息类型:', typeof data);
+      try { console.log('🔍 消息结构:', typeof data === 'string' ? data : JSON.stringify(data, null, 2)); } catch {}
+    }
     
     // 直接传递原始数据，不做任何处理
     this.config.onMessage?.(data);
@@ -122,7 +134,9 @@ export class WebSocketService {
    * 处理连接错误
    */
   private handleError(error: any): void {
-    console.error('🔍 WebSocket错误:', error);
+    if (process.env.NODE_ENV === 'development') {
+      console.error('🔍 WebSocket错误:', error);
+    }
     this.isConnected = false;
     this.config.onError?.(error);
   }
@@ -131,7 +145,9 @@ export class WebSocketService {
    * 处理连接打开
    */
   private handleOpen(): void {
-    console.log('🔍 WebSocket连接已打开');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 WebSocket连接已打开');
+    }
     this.isConnected = true;
     this.config.onOpen?.();
   }
@@ -140,7 +156,9 @@ export class WebSocketService {
    * 处理连接关闭
    */
   private handleClose(event: CloseEvent): void {
-    console.log('🔍 WebSocket连接已关闭:', event.code);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 WebSocket连接已关闭:', event.code);
+    }
     this.isConnected = false;
     this.config.onClose?.(event);
   }

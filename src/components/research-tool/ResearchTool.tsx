@@ -43,6 +43,39 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const [thinkingLogExpanded, setThinkingLogExpanded] = React.useState<Record<string, boolean>>({});
   const messageApi = useMessage();
 
+  // 仅保留“WebSocket V2 收到原始消息”日志，屏蔽其它控制台输出
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const original = {
+      log: console.log,
+      info: console.info,
+      warn: console.warn,
+      error: console.error,
+    };
+    const allow = (args: unknown[]): boolean => {
+      try {
+        const first = args[0];
+        return typeof first === 'string' && first.includes('WebSocket V2 收到原始消息');
+      } catch {
+        return false;
+      }
+    };
+    console.log = (...args: any[]) => {
+      if (allow(args)) original.log(...args);
+    };
+    console.info = (...args: any[]) => {
+      if (allow(args)) original.info(...args);
+    };
+    console.warn = (..._args: any[]) => {};
+    console.error = (..._args: any[]) => {};
+    return () => {
+      console.log = original.log;
+      console.info = original.info;
+      console.warn = original.warn;
+      console.error = original.error;
+    };
+  }, []);
+
   const [chatHistory, setChatHistory] = React.useState<any>(null);
   const [competitorModalMode, setCompetitorModalMode] = React.useState<'add' | 'edit'>('add');
   const [editingPage, setEditingPage] = React.useState<any>(null);
@@ -74,7 +107,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     const checkDomain = () => {
       const domain = localStorage.getItem('currentDomain');
       if (domain && domain !== currentDomain) {
-        console.log('🔍 检测到域名变化:', domain);
         setCurrentDomain(domain);
       }
     };
@@ -85,7 +117,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     // 监听storage事件
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'currentDomain') {
-        console.log('🔍 localStorage域名变化:', e.newValue);
         setCurrentDomain(e.newValue || '');
       }
     };
@@ -303,9 +334,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   }, []);
 
   const handleWebSocketMessage = (data: any) => {
-    console.log('🔍 收到WebSocket消息 - 原始内容:', data);
-    console.log('🔍 消息类型:', typeof data);
-    try { console.log('🔍 消息结构:', typeof data === 'string' ? data : JSON.stringify(data, null, 2)); } catch {}
 
     // 兼容字符串消息（某些后端直接发送字符串）
     let payload: any = data;
@@ -346,12 +374,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             const entries = item.hub_entries;
             const count = entries.length;
             // 在卡片前插入一条提示气泡
-            aiQueueRef.current.push({ kind: 'text', content: `已找到 ${count} 个候选页面，请在下方卡片中勾选后点击生成。` });
+            aiQueueRef.current.push({ kind: 'text', content: `${count} candidate pages have been found. Please check the boxes in the cards below and click "Generate".` });
             aiQueueRef.current.push({ kind: 'hub_entries', pageType: item.page_type, entries });
             continue;
           }
         }
-        console.log('🔍 tool_call 解析完成，入队数量:', aiQueueRef.current.length);
       }
 
       if (isToolResult) {
@@ -367,9 +394,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         if (hubEntries.length > 0) {
           const count = hubEntries.length;
           // 在卡片前插入一条提示气泡
-          aiQueueRef.current.push({ kind: 'text', content: `已找到 ${count} 个候选页面，请在下方卡片中勾选后点击生成。` });
+          aiQueueRef.current.push({ kind: 'text', content: `Found ${count} candidate pages. Please check the boxes in the cards below and click Generate.` });
           aiQueueRef.current.push({ kind: 'hub_entries', pageType, entries: hubEntries });
-          console.log('🔍 tool_result 检测到 hub_entries，数量:', hubEntries.length);
         }
 
         // 如果返回了生成完成的页面ID，自动打开右侧预览标签
@@ -382,9 +408,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           logIdDebug('recv', payload, matchedHub, 'tool_result');
         }
       }
-    } catch (e) {
-      console.warn('解析 tool 消息失败', e);
-    }
+    } catch (e) {}
 
     // 顺序处理队列
     processAIQueue();
@@ -408,6 +432,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         case 'system':
           messageHandler.addSystemMessage(payload.content);
           break;
+        case 'warning':
+          messageHandler.addSystemMessage(payload.content);
         default:
           // 对于未知类型的消息，作为系统消息处理
           if (typeof payload?.markdown === 'string') {
@@ -425,13 +451,23 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           }
           break;
       }
+    } else {
+      // 兜底：无 type 的纯文本或未知结构，按文本渲染
+      const textCandidate =
+        (typeof payload === 'string' && payload) ||
+        (typeof payload?.content === 'string' && payload.content) ||
+        (typeof payload?.markdown === 'string' && payload.markdown) ||
+        '';
+      if (textCandidate && textCandidate.trim().length > 0) {
+        aiQueueRef.current.push({ kind: 'text', content: textCandidate });
+        processAIQueue();
+      }
     }
   };
 
   const handleWebSocketError = (error: any) => {
     const errorMessage = error?.message || '未知错误';
     setWsError(errorMessage);
-    messageHandler.addSystemMessage(`⚠️ WebSocket连接错误: ${errorMessage}`);
   };
 
   const handleWebSocketClose = (event: CloseEvent) => {
@@ -439,7 +475,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     setWsConnectionState('CLOSED');
     
     if (event.code !== 1000) {
-      messageHandler.addSystemMessage('⚠️ WebSocket连接已断开');
     }
   };
 
@@ -447,47 +482,28 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     setWsConnected(true);
     setWsConnectionState('OPEN');
     setWsError(null);
-    // messageHandler.addSystemMessage('🔗 WebSocket连接已建立，可以开始实时聊天');
   };
 
   // 自动检测URL参数并建立WebSocket连接
   useEffect(() => {
     try {
-      console.log('🔍 ===== 开始自动检测URL参数 =====');
-      console.log('🔍 当前URL:', typeof window !== 'undefined' ? window.location.href : 'SSR环境');
-      console.log('🔍 传入的conversationId:', conversationId);
-
-      console.log('🔍 当前currentConversationId:', currentConversationId);
-      
       // 1. 自动检测：URL中的conversationId参数
       const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
       const urlConversationId = urlParams.get('conversationId');
-      console.log('🔍 URL中的conversationId参数:', urlConversationId);
       
       // 2. 自动设置：恢复模式和对话ID
       let targetConversationId = conversationId || urlConversationId;
       let shouldRecover = false;
       
       if (targetConversationId) {
-        console.log('🔍 检测到conversationId');
-        console.log('🔍 目标conversationId:', targetConversationId);
+
         
         // 设置conversationId - 避免无限循环
         if (targetConversationId !== currentConversationId) {
-          console.log('🔍 更新currentConversationId:', targetConversationId);
           setCurrentConversationId(targetConversationId);
         }
-      } else {
-        console.log('🔍 未检测到conversationId');
       }
-      
-      console.log('🔍 ===== URL参数检测完成 =====');
     } catch (error: any) {
-      console.error('🔍 URL参数检测过程中发生错误:', error);
-      console.error('🔍 错误详情:', {
-        message: error?.message || '未知错误',
-        stack: error?.stack || '无堆栈信息'
-      });
     }
   }, [conversationId]); // 移除currentConversationId依赖，避免无限循环
 
@@ -495,9 +511,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   useEffect(() => {
     try {
       if (currentConversationId) {
-        console.log('🔍 ===== 开始处理conversationId变化 =====');
-        console.log('🔍 conversationId已设置:', currentConversationId);
-        
         // 4. 自动连接：建立WebSocket连接
         if (!wsConnected && wsConnectionState === 'CLOSED') {
           // 这里会触发WebSocket连接建立
@@ -505,149 +518,57 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         }
       }
     } catch (error: any) {
-      console.error('🔍 conversationId变化处理过程中发生错误:', error);
-      console.error('🔍 错误详情:', {
-        message: error?.message || '未知错误',
-        stack: error?.stack || '无堆栈信息'
-      });
     }
   }, [currentConversationId]); // 简化依赖，避免循环
 
-  // 加载聊天历史记录 - 已删除API调用
+  // 加载聊天历史记录并恢复渲染进度
   const loadChatHistory = async (conversationId: string) => {
-    console.log('🔍 ===== 开始加载聊天历史记录 =====');
-    console.log('🔍 目标conversationId:', conversationId);
-    console.log('🔍 ✅ 跳过聊天历史API调用，不加载历史记录');
-    console.log('🔍 ===== 聊天历史记录加载完成 =====');
-  };
-
-  // 处理聊天响应的辅助函数
-  const handleChatResponse = async (rawAnswer: string, thinkingMessageId: string, tempConversationId: string | null, formattedInput: string) => {
-    if (rawAnswer.includes('[URL_GET]')) {
-      localStorage.setItem('currentProductUrl', formattedInput);
-      messageHandler.updateAgentMessage(rawAnswer, thinkingMessageId);
-
-      // 当AI需要时，进行竞争对手搜索和websiteId匹配
-      console.log('🔍 AI需要搜索竞争对手，开始处理...');
-      
-      // 1. 搜索竞争对手
-      if (tempConversationId) {
-        try {
-          const searchResponse = await apiClient.searchCompetitor(
-            tempConversationId,
-            formattedInput
-          );
-          console.log('🔍 竞争对手搜索响应:', searchResponse);
-
-          if (searchResponse?.code === 200) {
-            messageHandler.addSystemMessage(
-              "Agent starts working on find competitor list for you, it usually takes a minute or two, please hold on..."
-            );
-            setIsProcessingTask(true);
-          }
-        } catch (error) {
-          console.error('🔍 竞争对手搜索失败:', error);
-        }
-      }
-      
-      // 2. 查找websiteId并设置currentWebsiteId
-      try {
-        const websiteId = await findWebsiteIdByDomain(formattedInput);
-        if (websiteId) {
-          console.log('🔍 找到websiteId，设置currentWebsiteId:', websiteId);
-          setCurrentWebsiteId(websiteId);
-        }
-      } catch (error) {
-        console.error('🔍 websiteId查找失败:', error);
-      }
-    } else {
-      const answer = filterMessageTags(rawAnswer);
-      messageHandler.updateAgentMessage(answer, thinkingMessageId);
-    }
-  };
-
-  // 根据域名查找websiteId的函数 (不调用历史记录)
-  const findWebsiteIdByDomain = async (domain: string): Promise<string | null> => {
     try {
-      console.log('🔍 根据域名查找websiteId:', domain);
-      console.log('🔍 ✅ 跳过历史记录获取，直接生成新的websiteId');
-      
-      // 不调用历史记录API，直接生成新的websiteId
-      try {
-        const generateResponse = await apiClient.generateWebsiteId();
-        if (generateResponse?.code === 200 && generateResponse.data?.websiteId) {
-          console.log('🔍 ✅ 生成新的websiteId:', generateResponse.data.websiteId);
-          return generateResponse.data.websiteId;
-        } else {
-          console.log('🔍 ⚠️ 生成websiteId失败，使用回退方案');
-          // 回退方案：生成一个基于时间戳的websiteId
-          const fallbackWebsiteId = `generated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          console.log('🔍 使用回退websiteId:', fallbackWebsiteId);
-          return fallbackWebsiteId;
-        }
-      } catch (error: any) {
-        console.error('🔍 生成websiteId失败:', error);
-        // 最后的回退方案
-        const fallbackWebsiteId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        console.log('🔍 使用最终回退websiteId:', fallbackWebsiteId);
-        return fallbackWebsiteId;
+
+
+      const resp = await apiClient.getAlternativeChatHistory(conversationId as any);
+      const records = Array.isArray(resp?.data)
+        ? resp.data
+        : Array.isArray(resp)
+          ? resp
+          : Array.isArray(resp?.records)
+            ? resp.records
+            : [];
+
+      if (!Array.isArray(records) || records.length === 0) {
+        return;
       }
-    } catch (error: any) {
-      console.error('🔍 查找websiteId失败:', error);
-      return null;
+
+      // 依次回放历史事件，使用现有的消息处理逻辑以保证渲染一致
+      let lastTs: string | number | null = null;
+      for (const rec of records) {
+        try {
+          handleWebSocketMessage(rec);
+          const ts =
+            (typeof rec?.timestamp === 'string' && rec.timestamp) ||
+            (typeof rec?.ts === 'number' && rec.ts) ||
+            (typeof rec?.payload?.timestamp === 'string' && rec.payload.timestamp) ||
+            null;
+          if (ts) lastTs = ts;
+        } catch (e) {}
+      }
+
+      // 记录最后一条事件时间戳用于断点续传
+      try {
+        const key = `ws_resume_ts_${conversationId}`;
+        if (lastTs) {
+          localStorage.setItem(key, String(lastTs));
+        }
+      } catch {}
+      
+    } catch (error) {
     }
   };
 
-  // 使用includes进行模糊匹配
-  const findWebsiteByDomain = (domain: string, websites: any[]): any | null => {
-    const cleanDomain = domain.toLowerCase().trim();
-    
-    // 精确匹配
-    for (const website of websites) {
-      const websiteUrl = website.websiteURL || website.website || '';
-      const websiteDomain = extractDomainFromUrl(websiteUrl);
-      
-      if (websiteDomain === cleanDomain) {
-        console.log('🔍 精确匹配成功:', websiteDomain);
-        return website;
-      }
-    }
-    
-    // 包含匹配
-    for (const website of websites) {
-      const websiteUrl = website.websiteURL || website.website || '';
-      const websiteDomain = extractDomainFromUrl(websiteUrl);
-      
-      if (websiteDomain.includes(cleanDomain) || cleanDomain.includes(websiteDomain)) {
-        console.log('🔍 包含匹配成功:', websiteDomain, '包含', cleanDomain);
-        return website;
-      }
-    }
-    
-    // 部分匹配（域名的主要部分）
-    const domainParts = cleanDomain.split('.');
-    if (domainParts.length >= 2) {
-      const mainDomain = domainParts.slice(-2).join('.');
-      
-      for (const website of websites) {
-        const websiteUrl = website.websiteURL || website.website || '';
-        const websiteDomain = extractDomainFromUrl(websiteUrl);
-        const websiteDomainParts = websiteDomain.split('.');
-        
-        if (websiteDomainParts.length >= 2) {
-          const websiteMainDomain = websiteDomainParts.slice(-2).join('.');
-          
-          if (mainDomain === websiteMainDomain) {
-            console.log('🔍 主域名匹配成功:', mainDomain);
-            return website;
-          }
-        }
-      }
-    }
-    
-    console.log('🔍 未找到匹配的网站');
-    return null;
-  };
+
+
+
+
 
   // 从URL中提取域名
   const extractDomainFromUrl = (url: string): string => {
@@ -662,10 +583,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       
       const urlObj = new URL(fullUrl);
       return urlObj.hostname.toLowerCase();
-    } catch (error) {
-      console.error('🔍 URL解析失败:', url, error);
-      return url.toLowerCase();
-    }
+    } catch (error) { return url.toLowerCase(); }
   };
 
   // 添加缺失的方法
@@ -762,9 +680,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       // 只有当域名真正变化时才更新状态
       if (processedDomain !== currentDomain) {
         setCurrentDomain(processedDomain);
-        console.log('🔍 域名已更新:', processedDomain);
-      } else {
-        console.log('🔍 域名未变化，跳过状态更新:', processedDomain);
       }
 
       // 根据图片规则：用户发送第一条消息创建聊天室
@@ -781,7 +696,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           
           // 检查API响应中是否包含conversationId
           if (chatResponse.conversationId) {
-            console.log('🔍 从API响应中获取到conversationId:', chatResponse.conversationId);
             tempConversationId = chatResponse.conversationId;
             setCurrentConversationId(tempConversationId);
 
@@ -806,7 +720,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         
                 
                 if (data.conversationId) {
-                  console.log('🔍 收到后端返回的conversationId:', data.conversationId);
                   setCurrentConversationId(data.conversationId);
                   
                   // 实时更新URL
@@ -821,9 +734,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                   }
                   router.replace(`${targetPath}?conversationId=${data.conversationId}`);
                 }
-              } catch (error) {
-                console.error('🔍 解析WebSocket消息失败:', error);
-              }
+              } catch (error) {}
             };
           }
         } else {
@@ -836,8 +747,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
       // 通过WebSocket发送业务请求
       try {
-        console.log('🔍 准备通过WebSocket发送业务请求:', formattedInput);
-        
         // 检查WebSocket连接状态
         if (webSocketRef.current && webSocketRef.current.isConnected) {
           // 通过WebSocket发送消息
@@ -849,25 +758,18 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             timestamp: new Date().toISOString()
           };
           
-          console.log('🔍 发送WebSocket业务消息:', message);
-          
           // 通过WebSocket发送消息
           const success = webSocketRef.current.sendMessage(message);
           if (success) {
-            messageHandler.updateAgentMessage('消息已发送，等待后端处理...', thinkingMessageId);
           } else {
-            messageHandler.updateAgentMessage('发送消息失败，请检查连接状态', thinkingMessageId);
           }
         } else {
-          messageHandler.updateAgentMessage('WebSocket连接未建立，请稍后重试', thinkingMessageId);
         }
       } catch (error) {
-        console.error('WebSocket发送失败:', error);
-        messageHandler.updateAgentMessage('发送WebSocket消息失败，请稍后重试', thinkingMessageId);
+        
       }
     } catch (error) {
       // 静默处理错误
-      console.error('Chat error:', error);
       messageHandler.updateAgentMessage('An error occurred while processing your request. Please try again.', thinkingMessageId);
     } finally {
       setIsMessageSending(false);
@@ -2061,7 +1963,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 placeholder="Please enter your website domain...."
                                 chatType={getPageMode()}
                                 onDomainProcessed={(domain, websiteId) => {
-                                  console.log('🔍 域名已处理:', { domain, websiteId });
                                   // 这里可以添加额外的域名处理逻辑
                                 }}
                               />
@@ -2214,7 +2115,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                               }
                               chatType={getPageMode()}
                               onDomainProcessed={(domain, websiteId) => {
-                                console.log('🔍 域名已处理:', { domain, websiteId });
                                 // 这里可以添加额外的域名处理逻辑
                               }}
                             />
@@ -2427,9 +2327,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           onClose={handleWebSocketClose}
           onOpen={handleWebSocketOpen}
           autoConnect={true}
-          onSendMessage={(message) => {
-            console.log('🔍 消息已发送:', message);
-          }}
+          onSendMessage={undefined}
           onThemeSwitch={switchTheme}
         />
       )}

@@ -4,7 +4,6 @@
 "use client";
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { useMediaQuery } from 'react-responsive';
 import type { 
   ConversationMessage, 
   PageData, 
@@ -23,7 +22,28 @@ import apiClient from '@/lib/api';
 export const useResearchTool = (conversationId: string | null = null) => {
   const router = useRouter();
   const pathname = usePathname();
-  const isMobile = useMediaQuery({ query: '(max-width: 767px)' });
+  // Avoid SSR hydration mismatch by determining viewport only after mount
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mediaQuery = window.matchMedia('(max-width: 767px)');
+
+    const updateMatch = () => setIsMobile(mediaQuery.matches);
+    // Initialize
+    updateMatch();
+
+    // Subscribe to changes (support older browsers)
+    if ((mediaQuery as any).addEventListener) {
+      (mediaQuery as any).addEventListener('change', updateMatch);
+      return () => (mediaQuery as any).removeEventListener('change', updateMatch);
+    } else {
+      // addListener exists on older MediaQueryList
+      (mediaQuery as any).addListener(updateMatch);
+      return () => {
+        (mediaQuery as any).removeListener(updateMatch);
+      };
+    }
+  }, []);
   
   // 对应老代码中的基础状态
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -109,6 +129,59 @@ export const useResearchTool = (conversationId: string | null = null) => {
   const isShowingReconnectNoticeRef = useRef(false);
   const isFirstMessageSentForNewTaskRef = useRef(false);
   const processedTipMessagesRef = useRef(new Set<string>());
+
+  // 本地持久化：恢复与保存聊天记录（按conversationId区分）
+  // 恢复上次会话ID（当外部未提供且URL未设置时）
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!currentConversationId) {
+      try {
+        const last = localStorage.getItem('rt_last_conversation_id');
+        if (last) {
+          setCurrentConversationId(last);
+        }
+      } catch {}
+    }
+  }, []);
+
+  // 记录当前会话ID
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (currentConversationId) {
+      try { localStorage.setItem('rt_last_conversation_id', currentConversationId); } catch {}
+    }
+  }, [currentConversationId]);
+
+  // 本地持久化：恢复与保存聊天记录（按conversationId区分）
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const key = currentConversationId ? `rt_messages_${currentConversationId}` : null;
+    try {
+      if (key) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw) as ConversationMessage[];
+          if (Array.isArray(parsed)) {
+            setMessages(parsed);
+          }
+        }
+      }
+    } catch {}
+  // 仅在会话变化时尝试恢复
+  }, [currentConversationId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const key = currentConversationId ? `rt_messages_${currentConversationId}` : null;
+    try {
+      if (key) {
+        const json = JSON.stringify(messages, (_k, v) => (typeof v === 'function' ? undefined : v));
+        localStorage.setItem(key, json);
+      }
+    } catch {}
+  }, [messages, currentConversationId]);
+
+  // 断点续传时间戳的写入统一由连接组件处理，避免重复写入
 
   // 创建MessageHandler实例
   const messageHandler = useMemo(() => new MessageHandler(setMessages), []);

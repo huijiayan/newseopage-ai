@@ -1,7 +1,7 @@
 "use client";
 
 import ScrollToTopButton from '@/components/ui/ScrollToTopButton';
-import React, { useEffect, Suspense } from 'react';
+import React, { useEffect, Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import CustomizableResearchUI from '@/components/ui/CustomizableResearchUI';
 import SubscriptionCard from '@/components/ui/SubscriptionCard';
@@ -13,19 +13,18 @@ import { ResearchTool } from '@/components/research-tool';
 // Alternative 页面内容组件
 function AlternativePageContent() {
   const searchParams = useSearchParams();
-  const conversationId = searchParams.get('conversationId');
-  
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const conversationId = mounted ? searchParams.get('conversationId') : null;
 
   // 样式已通过 CSS 文件预编译，无需动态注入
 
   return (
       <div className="min-h-[calc(100vh-66px)] bg-[#F8FAFB] dark:bg-dark-navy">
- 
-        {/* 动态组件：根据 URL 参数决定显示 Hero 还是 ResearchTool */}
+
+        {/* 动态组件：为避免 SSR/CSR 水合不一致，首次始终渲染 Hero，挂载后再切换 */}
         {conversationId ? (
-          <ResearchTool 
-            conversationId={conversationId} 
-          />
+          <ResearchTool conversationId={conversationId} />
         ) : (
           <Hero />
         )}
