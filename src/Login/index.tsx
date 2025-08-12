@@ -72,6 +72,11 @@ export default function AuthManager(props: AuthManagerProps) {
         window.history.replaceState({}, document.title, window.location.pathname);
         const loginSuccessEvent = new CustomEvent('alternativelyLoginSuccess');
         window.dispatchEvent(loginSuccessEvent);
+        
+        // 登录成功后刷新页面
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
       } catch (error) {
         console.error('Login process failed:', error);
         message.error('Authentication failed');
@@ -143,11 +148,18 @@ export default function AuthManager(props: AuthManagerProps) {
             'user_id': response.data.customerId,
           });
         }
-        console.log('before window.location.href', window.location.hostname, response.data);
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-          window.location.href = '/';
-        } else {
+        
+        // Google登录API返回的是重定向URL，不是用户信息
+        // 我们需要等待用户完成OAuth流程后再获取用户信息
+        // 这里先不设置登录状态，等待OAuth回调完成
+        
+        console.log('Google OAuth URL:', response.data);
+        // Google登录需要重定向到OAuth页面
+        // 用户完成OAuth后会回到我们的回调URL
+        if (response.data && typeof response.data === 'string' && response.data.startsWith('http')) {
           window.location.href = response.data;
+        } else {
+          message.error('Invalid OAuth URL received');
         }
       } else {
         message.error('Google login request failed, please try again later');
@@ -183,6 +195,11 @@ export default function AuthManager(props: AuthManagerProps) {
       message.success('Login successful!');
       setShowLoginModal(false);
       window.dispatchEvent(new CustomEvent('alternativelyLoginSuccess'));
+      
+      // 登录成功后刷新页面
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
     } catch (error: any) {
       console.error('Google One Tap login failed:', error);
       message.error(error.response?.data?.error || 'Authentication failed');
@@ -244,6 +261,11 @@ export default function AuthManager(props: AuthManagerProps) {
     message.success('Login successful!');
     setShowLoginModal(false);
     window.dispatchEvent(new Event('alternativelyLoginSuccess'));
+    
+    // 登录成功后刷新页面
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
   };
 
   const handleRegisterSuccess = (userData: any) => {
@@ -263,6 +285,11 @@ export default function AuthManager(props: AuthManagerProps) {
       'user_id': userData.customerId,
     });
     window.dispatchEvent(new Event('alternativelyLoginSuccess'));
+    
+    // 注册成功后刷新页面
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
   };
 
   useEffect(() => {
@@ -286,11 +313,6 @@ export default function AuthManager(props: AuthManagerProps) {
         setIsLoggedIn(true);
         setUserEmail(storedEmail);
         setAppUserEmail(storedEmail);
-        
-        // 登录成功后刷新页面
-        setTimeout(() => {
-          window.location.reload();
-        }, 1000); // 延迟1秒刷新，让用户看到成功消息
       }
     };
     window.addEventListener('alternativelyLoginSuccess', handleLoginSuccess);

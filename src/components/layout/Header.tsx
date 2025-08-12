@@ -109,7 +109,7 @@ export const Header = () => {
   });
   const [isOneTapShown, setIsOneTapShown] = useState(false);
   const [removeWatermark, setRemoveWatermark] = useState(false);
-  const [taskNotificationEmail, setTaskNotificationEmail] = useState(true);
+  const [taskNotificationEmail, setTaskNotificationEmail] = useState(false);
   const [packageType, setPackageType] = useState(0);
   const [userCredits, setUserCredits] = useState<UserCredits>({
     pageGeneratorLimit: 0,
@@ -161,32 +161,21 @@ export const Header = () => {
       }
   }, []);
 
-  // 同步用户邮箱和设置
+  // 同步用户邮箱
   useEffect(() => {
-    const syncUserData = async () => {
+    const syncUserEmail = () => {
       const storedEmail = localStorage.getItem('alternativelyCustomerEmail');
       if (storedEmail) {
         setUserEmail(storedEmail);
-        
-        // 获取用户的通知偏好设置
-        try {
-          const customerInfo = await apiClient.getCustomerInfo();
-          if (customerInfo?.taskCompletionEmail !== undefined) {
-            setTaskNotificationEmail(customerInfo.taskCompletionEmail);
-          }
-        } catch (error) {
-          console.error('Failed to get customer notification preferences:', error);
-          // 如果获取失败，保持默认值 true
-        }
       }
     };
     
-    // 初始化时同步用户数据
-    syncUserData();
+    // 初始化时同步用户邮箱
+    syncUserEmail();
     
-    window.addEventListener('alternativelyLoginSuccess', syncUserData);
+    window.addEventListener('alternativelyLoginSuccess', syncUserEmail);
     return () => {
-      window.removeEventListener('alternativelyLoginSuccess', syncUserData);
+      window.removeEventListener('alternativelyLoginSuccess', syncUserEmail);
     };
   }, [setUserEmail]);
 
@@ -225,10 +214,6 @@ export const Header = () => {
         setUserEmail(decodedEmail);
         message.success('Login successful!');
         window.history.replaceState({}, document.title, window.location.pathname);
-        
-        // 触发登录成功事件，让其他组件知道登录状态已更新
-        const loginSuccessEvent = new CustomEvent('alternativelyLoginSuccess');
-        window.dispatchEvent(loginSuccessEvent);
       } catch (error) {
         console.error('Login process failed:', error);
         message.error('Authentication failed');

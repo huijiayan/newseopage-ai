@@ -54,7 +54,7 @@ export const HeaderBadges: React.FC<HeaderBadgesProps> = ({
         <div className="flex-shrink-0 ml-3">
           <a href="https://www.producthunt.com/products/altpage-ai?embed=true&utm_source=badge-top-post-badge&utm_medium=badge&utm_source=badge-altpage&#0045;ai" target="_blank">
             <img
-              src={isDarkMode ? "/icons/ph-badge-dark.svg" : "/icons/ph-badge-light.svg"}
+              src={`https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=967689&theme=${isDarkMode ? 'dark' : 'light'}&period=daily&t=1749613315263`}
               alt="AltPage&#0046;ai - Steal&#0032;competitor&#0032;brand&#0032;traffic&#0032;with&#0032;alternative&#0032;pages | Product Hunt"
               style={{
                 width: shouldShowBadges() && isTablet ? '160px' : '180px',
