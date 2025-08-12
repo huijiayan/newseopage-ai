@@ -86,45 +86,12 @@ const isVercel = typeof window !== 'undefined' && (
   window.location.hostname.includes('newseopage-ai.vercel.app')
 );
 
-// 环境配置 - 优先使用环境变量，否则根据当前域名自动判断
+// 统一环境配置：优先使用环境变量，否则使用固定默认值
 const getEnvironmentConfig = () => {
-  // 如果环境变量已设置，直接使用
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return {
-      apiUrl: process.env.NEXT_PUBLIC_API_URL,
-      chatApiUrl: process.env.NEXT_PUBLIC_CHAT_API_URL || 'https://agents.zhuyuejoey.com',
-      chatWsUrl: process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuejoey.com'
-    };
-  }
-
-  // 根据域名自动判断环境
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    
-    // 测试环境域名
-    if (hostname.includes('localhost') || hostname.includes('127.0.0.1') || hostname.includes('test')) {
-      return {
-        apiUrl: 'https://api.zhuyuejoey.com/v1',
-        chatApiUrl: 'https://agents.zhuyuejoey.com',
-        chatWsUrl: 'wss://agents.zhuyuejoey.com'
-      };
-    }
-    
-    // 生产环境域名 - 暂时使用测试环境API
-    if (hostname.includes('websitelm.com') || hostname.includes('seopage.ai') || hostname.includes('bestpage.ai')) {
-      return {
-        apiUrl: 'https://api.zhuyuejoey.com/v1',
-        chatApiUrl: 'https://agents.zhuyuejoey.com',
-        chatWsUrl: 'wss://agents.zhuyuejoey.com'
-      };
-    }
-  }
-
-  // 默认使用测试环境
   return {
-    apiUrl: 'https://api.zhuyuejoey.com/v1',
-    chatApiUrl: 'https://agents.zhuyuejoey.com',
-    chatWsUrl: 'wss://agents.zhuyuejoey.com'
+    apiUrl: process.env.NEXT_PUBLIC_API_URL || 'https://api.websitelm.com/v1',
+    chatApiUrl: process.env.NEXT_PUBLIC_CHAT_API_URL || 'https://agents.zhuyuejoey.com',
+    chatWsUrl: process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuejoey.com'
   };
 };
 
