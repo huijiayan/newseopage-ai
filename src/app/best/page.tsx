@@ -8,7 +8,7 @@ import { ResearchTool, injectResearchToolStyles } from '@/components/research-to
 function BestPageContent() {
   const searchParams = useSearchParams();
   const conversationId = searchParams.get('conversationId');
-  const mode = searchParams.get('mode') as 'normal' | 'recover' || 'normal';
+  
 
   // 确保样式文件被正确注入
   useEffect(() => {
@@ -23,7 +23,6 @@ function BestPageContent() {
       {conversationId ? (
         <ResearchTool 
           conversationId={conversationId} 
-          mode={mode}
         />
       ) : (
         <Hero />

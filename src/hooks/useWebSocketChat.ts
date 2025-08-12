@@ -6,6 +6,7 @@ import { WebSocketChatV2, connectWebSocketChatV2, ChatMessage } from '@/lib/api/
 
 export interface UseWebSocketChatOptions {
   conversationId?: string;
+  domain?: string; // 添加域名参数
   autoConnect?: boolean;
   onMessage?: (data: any) => void;
   onError?: (error: any) => void;
@@ -24,7 +25,6 @@ export interface UseWebSocketChatReturn {
   connect: (conversationId?: string) => Promise<void>;
   disconnect: () => void;
   sendMessage: (content: string, messageId?: string) => boolean;
-  reconnect: () => Promise<void>;
   
   // 服务实例
   chatService: WebSocketChatV2 | null;
@@ -33,6 +33,7 @@ export interface UseWebSocketChatReturn {
 export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebSocketChatReturn => {
   const {
     conversationId: initialConversationId,
+    domain, // 提取域名参数
     autoConnect = false,
     onMessage,
     onError,
@@ -84,21 +85,6 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     }
 
     try {
-      const w: any = window as any;
-      // 全局单例/单飞: 同一个会话已在连接或已连接则不重复连接
-      if (w.__wsActiveConvId === targetConversationId && (w.__wsIsOpen || w.__wsIsConnecting)) {
-        setConnectionState(w.__wsIsOpen ? 'OPEN' : 'CONNECTING');
-        setIsConnected(!!w.__wsIsOpen);
-        setIsConnecting(!!w.__wsIsConnecting);
-        return;
-      }
-
-      if (w.__wsIsConnecting) {
-        return;
-      }
-
-      w.__wsIsConnecting = true;
-      w.__wsActiveConvId = targetConversationId;
       setError(null);
       setIsConnecting(true);
       setConnectionState('CONNECTING');
@@ -107,6 +93,9 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         targetConversationId,
         (data: any) => {
           if (isMountedRef.current) {
+            console.log('🔍 useWebSocketChat收到原始消息:', data);
+            console.log('🔍 消息类型:', typeof data);
+            console.log('🔍 消息结构:', JSON.stringify(data, null, 2));
             onMessage?.(data);
           }
         },
@@ -129,11 +118,8 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
             setConnectionState('OPEN');
             onOpen?.();
           }
-          // 标记全局状态为已连接
-          const w2: any = window as any;
-          w2.__wsIsOpen = true;
-          w2.__wsIsConnecting = false;
-        }
+        },
+        domain // 传递域名参数
       );
 
       chatServiceRef.current = service;
@@ -160,13 +146,8 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         setIsConnecting(false);
         setConnectionState('CLOSED');
       }
-      const w3: any = window as any;
-      if (w3.__wsActiveConvId === targetConversationId) {
-        w3.__wsIsConnecting = false;
-        w3.__wsIsOpen = false;
-      }
     }
-  }, [currentConversationId, onMessage, onError, onClose, onOpen, isClient]);
+  }, [currentConversationId, onMessage, onError, onClose, onOpen, isClient, domain]);
 
   // 断开连接
   const disconnect = useCallback(() => {
@@ -179,13 +160,6 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     setIsConnected(false);
     setIsConnecting(false);
     setConnectionState('CLOSED');
-    // 清理全局标记（仅当断开的就是当前会话时）
-    const w: any = window as any;
-    if (w.__wsActiveConvId === currentConversationId) {
-      w.__wsIsOpen = false;
-      w.__wsIsConnecting = false;
-      w.__wsActiveConvId = null;
-    }
   }, [isClient]);
 
   // 发送消息
@@ -204,26 +178,10 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     return success;
   }, [isClient]);
 
-  // 重连
-  const reconnect = useCallback(async () => {
-    if (!isClient) return;
-    
-    if (chatServiceRef.current) {
-      chatServiceRef.current.disconnect();
-    }
-    await connect();
-  }, [connect, isClient]);
+
 
   // 自动连接
   useEffect(() => {
-    console.log('🔍 自动连接检查:', {
-      isClient,
-      autoConnect,
-      currentConversationId,
-      isConnected,
-      isConnecting
-    });
-
     if (isClient && autoConnect && currentConversationId && !isConnected && !isConnecting) {
       console.log('🔍 尝试自动连接WebSocket');
       connect();
@@ -233,7 +191,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       isMountedRef.current = false;
       cleanup();
     };
-  }, [autoConnect, currentConversationId, isClient, isConnected, isConnecting]);
+  }, [autoConnect, currentConversationId, isClient, isConnected, isConnecting, connect, cleanup]);
 
   // 组件卸载时清理
   useEffect(() => {
@@ -254,7 +212,6 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     connect,
     disconnect,
     sendMessage,
-    reconnect,
     
     // 服务实例
     chatService: isClient ? chatServiceRef.current : null,

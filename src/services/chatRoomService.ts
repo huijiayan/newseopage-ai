@@ -217,50 +217,32 @@ export class ChatRoomService {
     }
   }
 
-  // 根据域名查找websiteId - 使用前端匹配逻辑
+  // 根据域名查找websiteId - 不调用历史记录
   async findWebsiteIdByDomain(domain: string): Promise<string | null> {
     try {
       console.log('🔍 根据域名查找websiteId:', domain);
+      console.log('🔍 ✅ 跳过历史记录获取，直接生成新的websiteId');
       
-      // 获取网站列表进行匹配
-      const websiteListResponse = await apiClient.getAlternativeWebsiteList();
-      
-      if (websiteListResponse?.code === 200 && websiteListResponse.data) {
-        const websites = websiteListResponse.data;
-        console.log('🔍 获取到网站列表:', websites.length, '个网站');
-        
-        // 使用includes进行模糊匹配
-        const matchedWebsite = this.findWebsiteByDomain(domain, websites);
-        
-        if (matchedWebsite) {
-          console.log('🔍 找到匹配的网站:', matchedWebsite);
-          return matchedWebsite.websiteId || matchedWebsite.id;
+      // 不调用历史记录API，直接生成新的websiteId
+      try {
+        const generateResponse = await apiClient.generateWebsiteId();
+        if (generateResponse?.code === 200 && generateResponse.data?.websiteId) {
+          console.log('🔍 ✅ 生成新的websiteId:', generateResponse.data.websiteId);
+          return generateResponse.data.websiteId;
         } else {
-          console.log('🔍 未找到匹配的网站，使用回退机制');
-          // 回退机制：使用第一个网站或生成新的websiteId
-          if (websites.length > 0) {
-            const fallbackWebsite = websites[0];
-            console.log('🔍 使用回退网站:', fallbackWebsite);
-            return fallbackWebsite.websiteId || fallbackWebsite.id;
-          } else {
-            console.log('🔍 网站列表为空，尝试生成新的websiteId');
-            // 尝试生成新的websiteId
-            try {
-              const generateResponse = await apiClient.generateWebsiteId();
-              if (generateResponse?.code === 200 && generateResponse.data?.websiteId) {
-                console.log('🔍 生成新的websiteId:', generateResponse.data.websiteId);
-                return generateResponse.data.websiteId;
-              }
-            } catch (error) {
-              console.error('🔍 生成websiteId失败:', error);
-            }
-          }
+          console.log('🔍 ⚠️ 生成websiteId失败，使用回退方案');
+          // 回退方案：生成一个基于时间戳的websiteId
+          const fallbackWebsiteId = `generated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          console.log('🔍 使用回退websiteId:', fallbackWebsiteId);
+          return fallbackWebsiteId;
         }
-      } else {
-        console.error('🔍 获取网站列表失败:', websiteListResponse);
+      } catch (error: any) {
+        console.error('🔍 生成websiteId失败:', error);
+        // 最后的回退方案
+        const fallbackWebsiteId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        console.log('🔍 使用最终回退websiteId:', fallbackWebsiteId);
+        return fallbackWebsiteId;
       }
-      
-      return null;
     } catch (error: any) {
       console.error('🔍 查找websiteId失败:', error);
       return null;

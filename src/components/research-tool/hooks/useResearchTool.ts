@@ -20,7 +20,7 @@ import { DEFAULT_TASK_STEPS, TASK_TIME_ESTIMATES } from '@/types/research-tool';
 import { MessageHandler } from '../utils/MessageHandler';
 import apiClient from '@/lib/api';
 
-export const useResearchTool = (conversationId: string | null = null, mode: string = 'normal') => {
+export const useResearchTool = (conversationId: string | null = null) => {
   const router = useRouter();
   const pathname = usePathname();
   const isMobile = useMediaQuery({ query: '(max-width: 767px)' });
@@ -29,7 +29,7 @@ export const useResearchTool = (conversationId: string | null = null, mode: stri
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSlogan, setShowSlogan] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatHistory | null>(null);
-  const [loading, setLoading] = useState(mode === 'recover');
+  const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [userInput, setUserInput] = useState('');
   const [isMessageSending, setIsMessageSending] = useState(false);

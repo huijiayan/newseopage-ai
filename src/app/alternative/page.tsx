@@ -14,7 +14,7 @@ import { ResearchTool } from '@/components/research-tool';
 function AlternativePageContent() {
   const searchParams = useSearchParams();
   const conversationId = searchParams.get('conversationId');
-  const mode = searchParams.get('mode') as 'normal' | 'recover' || 'normal';
+  
 
   // 样式已通过 CSS 文件预编译，无需动态注入
 
@@ -25,7 +25,6 @@ function AlternativePageContent() {
         {conversationId ? (
           <ResearchTool 
             conversationId={conversationId} 
-            mode={mode}
           />
         ) : (
           <Hero />

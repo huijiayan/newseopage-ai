@@ -11,6 +11,12 @@
     "start": "next start",
     "lint": "next lint",
     "test:api": "node test-api.js",
+    "dev:test": "set NODE_ENV=test && next dev",
+    "build:test": "set NODE_ENV=test && next build",
+    "start:test": "set NODE_ENV=test && next start",
+    "env:test": "node scripts/set-env.js test",
+    "env:production": "node scripts/set-env.js production",
+    "test:env": "node scripts/test-env.js",
     "postinstall": "next telemetry disable"
   },
   "dependencies": {

@@ -104,7 +104,9 @@ const themeConfigs = {
         border: 'border-slate-600/40',
         hoverShadow: 'hover:shadow-slate-500/20',
         iconColor: 'text-slate-400',
-        timestampColor: 'text-slate-400'
+        timestampColor: 'text-slate-400',
+        codeBackground: 'bg-slate-700/50',
+        codeText: 'text-slate-200'
       },
       userMessage: {
         text: 'text-white',
@@ -119,6 +121,20 @@ const themeConfigs = {
         buttonText: 'rgba(34, 197, 94, 0.8)',
         buttonHoverBackground: 'rgba(34, 197, 94, 0.3)',
         buttonHoverText: 'rgba(34, 197, 94, 1)'
+      },
+      warningMessage: {
+        text: 'text-yellow-400'
+      },
+      errorMessage: {
+        text: 'text-red-400',
+        background: 'bg-red-900/20',
+        border: 'border-red-700/40',
+        buttonBackground: 'bg-red-800/40',
+        buttonText: 'text-red-200',
+        buttonHoverBackground: 'hover:bg-red-700/50'
+      },
+      infoMessage: {
+        text: 'text-blue-400'
       },
       sitemapButton: {
         background: 'linear-gradient(285.22deg, rgba(59, 130, 246, 0.15) 44.35%, rgba(150, 56, 7, 0.8) 92.26%)',
@@ -194,7 +210,8 @@ const themeConfigs = {
       setBrandColorButton: {
         background: 'bg-[rgba(34,42,65,1)]',
         text: 'text-white/80'
-      }
+      },
+      secondaryButton: 'bg-slate-700 hover:bg-slate-600'
     }
   },
   light: {
@@ -256,7 +273,47 @@ const themeConfigs = {
       setBrandColorButton: {
         background: 'bg-[#EFF4FF]',
         text: 'text-[#666666]'
-      }
+      },
+      systemMessage: {
+        background: 'bg-gray-100/80',
+        text: 'text-gray-800',
+        shadow: 'shadow-lg',
+        border: 'border-gray-300/40',
+        hoverShadow: 'hover:shadow-gray-400/20',
+        iconColor: 'text-gray-500',
+        timestampColor: 'text-gray-500',
+        codeBackground: 'bg-gray-200/50',
+        codeText: 'text-gray-700'
+      },
+      userMessage: {
+        text: 'text-gray-800',
+        background: 'bg-gray-100/10'
+      },
+      successMessage: {
+        border: '1px solid rgba(34, 197, 94, 0.2)',
+        background: 'rgba(34, 197, 94, 0.1)',
+        text: 'text-green-700',
+        iconBackground: 'bg-green-500',
+        buttonBackground: 'rgba(34, 197, 94, 0.2)',
+        buttonText: 'rgba(34, 197, 94, 0.8)',
+        buttonHoverBackground: 'rgba(34, 197, 94, 0.3)',
+        buttonHoverText: 'rgba(34, 197, 94, 1)'
+      },
+      warningMessage: {
+        text: 'text-yellow-600'
+      },
+      errorMessage: {
+        text: 'text-red-600',
+        background: 'bg-red-100/20',
+        border: 'border-red-300/40',
+        buttonBackground: 'bg-red-200/40',
+        buttonText: 'text-red-700',
+        buttonHoverBackground: 'hover:bg-red-300/50'
+      },
+      infoMessage: {
+        text: 'text-blue-600'
+      },
+      secondaryButton: 'bg-gray-600 hover:bg-gray-500'
     }
   }
 };

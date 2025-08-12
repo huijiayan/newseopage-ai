@@ -109,7 +109,7 @@ export const Header = () => {
   });
   const [isOneTapShown, setIsOneTapShown] = useState(false);
   const [removeWatermark, setRemoveWatermark] = useState(false);
-  const [taskNotificationEmail, setTaskNotificationEmail] = useState(false);
+  const [taskNotificationEmail, setTaskNotificationEmail] = useState(true);
   const [packageType, setPackageType] = useState(0);
   const [userCredits, setUserCredits] = useState<UserCredits>({
     pageGeneratorLimit: 0,
@@ -161,21 +161,32 @@ export const Header = () => {
       }
   }, []);
 
-  // 同步用户邮箱
+  // 同步用户邮箱和设置
   useEffect(() => {
-    const syncUserEmail = () => {
+    const syncUserData = async () => {
       const storedEmail = localStorage.getItem('alternativelyCustomerEmail');
       if (storedEmail) {
         setUserEmail(storedEmail);
+        
+        // 获取用户的通知偏好设置
+        try {
+          const customerInfo = await apiClient.getCustomerInfo();
+          if (customerInfo?.taskCompletionEmail !== undefined) {
+            setTaskNotificationEmail(customerInfo.taskCompletionEmail);
+          }
+        } catch (error) {
+          console.error('Failed to get customer notification preferences:', error);
+          // 如果获取失败，保持默认值 true
+        }
       }
     };
     
-    // 初始化时同步用户邮箱
-    syncUserEmail();
+    // 初始化时同步用户数据
+    syncUserData();
     
-    window.addEventListener('alternativelyLoginSuccess', syncUserEmail);
+    window.addEventListener('alternativelyLoginSuccess', syncUserData);
     return () => {
-      window.removeEventListener('alternativelyLoginSuccess', syncUserEmail);
+      window.removeEventListener('alternativelyLoginSuccess', syncUserData);
     };
   }, [setUserEmail]);
 
@@ -214,6 +225,10 @@ export const Header = () => {
         setUserEmail(decodedEmail);
         message.success('Login successful!');
         window.history.replaceState({}, document.title, window.location.pathname);
+        
+        // 触发登录成功事件，让其他组件知道登录状态已更新
+        const loginSuccessEvent = new CustomEvent('alternativelyLoginSuccess');
+        window.dispatchEvent(loginSuccessEvent);
       } catch (error) {
         console.error('Login process failed:', error);
         message.error('Authentication failed');
@@ -229,11 +244,11 @@ export const Header = () => {
         const timeoutId = setTimeout(() => controller.abort(), 2000);
         
         await Promise.race([
-          fetch('https://api.producthunt.com/v1/docs', { 
-            signal: controller.signal,
-            mode: 'no-cors' 
-          }),
           fetch('https://httpbin.org/status/200', {
+            signal: controller.signal,
+            mode: 'no-cors'
+          }),
+          fetch('https://jsonplaceholder.typicode.com/posts/1', {
             signal: controller.signal,
             mode: 'no-cors'
           })

@@ -119,10 +119,19 @@ const nextConfig = {
   
   // API代理配置 - 解决CORS问题
   async rewrites() {
+    // 根据环境变量动态选择API地址
+    const isTestEnv = process.env.NODE_ENV === 'test';
+    const apiBaseUrl = isTestEnv 
+      ? 'https://api.zhuyuejoey.com/v1' 
+      : 'https://api.websitelm.com/v1';
+    
+    console.log(`🔧 Next.js API代理配置: ${isTestEnv ? '测试环境' : '生产环境'}`);
+    console.log(`🔗 API地址: ${apiBaseUrl}`);
+    
     return [
       {
         source: '/api/v1/:path*',
-        destination: 'https://api.websitelm.com/v1/:path*',
+        destination: `${apiBaseUrl}/:path*`,
       },
     ];
   },

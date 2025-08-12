@@ -286,7 +286,7 @@ export interface ChatHistory {
 
 export interface ResearchToolProps {
   conversationId?: string | null;
-  mode?: 'normal' | 'recover';
+
 }
 
 // 对应老代码中的TAG_FILTERS常量

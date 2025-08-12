@@ -147,50 +147,50 @@ export class MessageHandler {
     ));
   }
 
-  // 处理竞品搜索状态更新 - 新增功能
-  handleCompetitorSearchUpdate(data: any): void {
-    console.log('🔍 处理竞品搜索状态更新:', data);
-    
-    if (data.status === 'started') {
-      this.addSystemMessage('🔍 竞品搜索已启动，正在搜索竞争对手...');
-    } else if (data.status === 'processing') {
-      this.addSystemMessage(`🔄 竞品搜索进行中... ${data.progress || 0}%`);
-    } else if (data.status === 'completed') {
-      this.addSystemMessage(`✅ 竞品搜索完成，找到 ${data.competitorsCount || 0} 个竞争对手`);
-    } else if (data.status === 'failed') {
-      this.addSystemMessage(`❌ 竞品搜索失败: ${data.error || '未知错误'}`);
-    }
-  }
+  // 处理竞品搜索状态更新 - 已停止使用
+  // handleCompetitorSearchUpdate(data: any): void {
+  //   console.log('🔍 处理竞品搜索状态更新:', data);
+  //   
+  //   if (data.status === 'started') {
+  //     this.addSystemMessage('🔍 竞品搜索已启动，正在搜索竞争对手...');
+  //   } else if (data.status === 'processing') {
+  //     this.addSystemMessage(`🔄 竞品搜索进行中... ${data.progress || 0}%`);
+  //   } else if (data.status === 'completed') {
+  //     this.addSystemMessage(`✅ 竞品搜索完成，找到 ${data.competitorsCount || 0} 个竞争对手`);
+  //   } else if (data.status === 'failed') {
+  //     this.addSystemMessage(`❌ 竞品搜索失败: ${data.error || '未知错误'}`);
+  //   }
+  // }
 
-  // 处理sitemap状态更新 - 新增功能
-  handleSitemapStatusUpdate(data: any): void {
-    console.log('🔍 处理sitemap状态更新:', data);
-    
-    if (data.status === 'processing') {
-      this.addSystemMessage(`🔄 网站地图处理中... ${data.progress || 0}%`);
-    } else if (data.status === 'completed') {
-      this.addSystemMessage('✅ 网站地图处理完成');
-    } else if (data.status === 'failed') {
-      this.addSystemMessage(`❌ 网站地图处理失败: ${data.error || '未知错误'}`);
-    }
-  }
+  // 处理sitemap状态更新 - 已停止使用
+  // handleSitemapStatusUpdate(data: any): void {
+  //   console.log('🔍 处理sitemap状态更新:', data);
+  //   
+  //   if (data.status === 'processing') {
+  //     this.addSystemMessage(`🔄 网站地图处理中... ${data.progress || 0}%`);
+  //   } else if (data.status === 'completed') {
+  //     this.addSystemMessage('✅ 网站地图处理完成');
+  //   } else if (data.status === 'failed') {
+  //     this.addSystemMessage(`❌ 网站地图处理失败: ${data.error || '未知错误'}`);
+  //   }
+  // }
 
-  // 处理任务状态更新 - 新增功能
-  handleTaskStatusUpdate(data: any): void {
-    console.log('🔍 处理任务状态更新:', data);
-    
-    if (data.status === 'started') {
-      this.addSystemMessage('🚀 任务已启动');
-    } else if (data.status === 'processing') {
-      this.addSystemMessage(`🔄 任务处理中... ${data.progress || 0}%`);
-    } else if (data.status === 'completed') {
-      this.addSystemMessage('✅ 任务完成');
-    } else if (data.status === 'failed') {
-      this.addSystemMessage(`❌ 任务失败: ${data.error || '未知错误'}`);
-    }
-  }
+  // 处理任务状态更新 - 已停止使用
+  // handleTaskStatusUpdate(data: any): void {
+  //   console.log('🔍 处理任务状态更新:', data);
+  //   
+  //   if (data.status === 'started') {
+  //     this.addSystemMessage('🚀 任务已启动');
+  //   } else if (data.status === 'processing') {
+  //     this.addSystemMessage(`🔄 任务处理中... ${data.progress || 0}%`);
+  //   } else if (data.status === 'completed') {
+  //     this.addSystemMessage('✅ 任务完成');
+  //   } else if (data.status === 'failed') {
+  //     this.addSystemMessage(`❌ 任务失败: ${data.error || '未知错误'}`);
+  //   }
+  // }
 
-  // 处理WebSocket消息 - 增强功能
+  // 处理WebSocket消息 - 简化功能
   handleWebSocketMessage(data: any): void {
     console.log('🔍 处理WebSocket消息:', data);
     
@@ -201,12 +201,14 @@ export class MessageHandler {
       this.addSystemMessage(data.content || '系统消息');
     } else if (data.type === 'error') {
       this.addSystemMessage(`⚠️ ${data.content || '发生错误'}`);
-    } else if (data.type === 'competitor_search') {
-      this.handleCompetitorSearchUpdate(data);
-    } else if (data.type === 'sitemap_status') {
-      this.handleSitemapStatusUpdate(data);
-    } else if (data.type === 'task_status') {
-      this.handleTaskStatusUpdate(data);
     }
+    // 注释掉竞品搜索、sitemap状态、任务状态的处理
+    // else if (data.type === 'competitor_search') {
+    //   this.handleCompetitorSearchUpdate(data);
+    // } else if (data.type === 'sitemap_status') {
+    //   this.handleSitemapStatusUpdate(data);
+    // } else if (data.type === 'task_status') {
+    //   this.handleTaskStatusUpdate(data);
+    // }
   }
 }

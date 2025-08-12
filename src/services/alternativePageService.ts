@@ -37,7 +37,7 @@ class AlternativePageService {
   // 创建SSE流式聊天会话
   async createStreamChatSession(chatType: string, message: string, conversationId: string | null = null, onMessage?: (data: any) => void) {
     try {
-      const response = await apiClient.chatWithAI(chatType, message, conversationId, onMessage);
+      const response = await apiClient.chatWithAI(chatType, message, conversationId, undefined, onMessage);
       return response;
     } catch (error) {
       console.error('Failed to create stream chat session:', error);
@@ -45,15 +45,10 @@ class AlternativePageService {
     }
   }
 
-  // 获取聊天历史
+  // 获取聊天历史 - 已删除API调用
   async getChatHistory(conversationId: string) {
-    try {
-      const response = await apiClient.getAlternativeChatHistory(conversationId);
-      return response;
-    } catch (error) {
-      console.error('Failed to get chat history:', error);
-      throw error;
-    }
+    console.log('🔍 跳过聊天历史API调用，不获取历史记录');
+    return { code: 200, data: [] };
   }
 
   // 获取网站列表

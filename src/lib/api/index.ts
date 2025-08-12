@@ -87,14 +87,8 @@ const isVercel = typeof window !== 'undefined' && (
 );
 
 const CHAT_API_URL = process.env.NEXT_PUBLIC_CHAT_API_URL || 'https://agents.zhuyuejoey.com'; // 聊天服务器地址
-// 在 Vercel 环境下通过同源路径走 Next.js rewrite 到后端，避免浏览器 CORS
-// 其他环境（本地、独立部署）仍然使用环境变量指向真实后端
-const API_URL = (typeof window !== 'undefined' && (
-  window.location.hostname.includes('vercel.app') ||
-  window.location.hostname.includes('newseopage-ai')
-))
-  ? '/api/v1'
-  : (process.env.NEXT_PUBLIC_API_URL || 'https://api.websitelm.com/v1'); // 主API服务器地址
+// 直接使用环境变量或默认主服务器地址，不再通过本地 /api/v1 代理
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.websitelm.com/v1'; // 主API服务器地址
 const CHAT_WS_URL = process.env.NEXT_PUBLIC_CHAT_WS_URL || 'wss://agents.zhuyuejoey.com'; // WebSocket服务器地址
 
 // 调试信息
@@ -313,7 +307,12 @@ const generateAlternative = async (conversationId: any, hubPageIds: any, website
       hubPageIds,
       websiteId
     });
-    return response.data;
+    const data = response.data;
+    // 统一返回结构：若后端未提供 code 字段，但请求成功（2xx），则补充 code: 200
+    if (data && typeof data === 'object' && 'code' in data) {
+      return data;
+    }
+    return { code: 200, data };
   } catch (error) {
     console.error('Failed to generate alternative:', error);
     throw error;
@@ -361,7 +360,7 @@ const getAlternativeResult = async (websiteId: any) => {
 };
 
 // 创建新聊天 - 使用WebSocket流式响应
-const chatWithAI = async (chatType: any, message: any, conversationId: any, onMessage?: (data: any) => void) => {
+const chatWithAI = async (chatType: any, message: any, conversationId: any, domain?: string, onMessage?: (data: any) => void) => {
   try {
     // 检查是否在客户端环境
     if (typeof window === 'undefined') {
@@ -381,13 +380,14 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, onMe
         chatType,
         message,
         conversationId,
+        domain, // 添加域名参数
       });
       
       // 检查响应中是否包含conversation_id（API返回的字段名）
       if (initialResponse.data && initialResponse.data.conversation_id) {
         // 使用API返回的conversation_id建立WebSocket连接
         const realConversationId = initialResponse.data.conversation_id;
-        const wsUrl = `${CHAT_WS_URL}/ws/chat/${realConversationId}?token=${token}`;
+        const wsUrl = `${CHAT_WS_URL}/ws/chat/${realConversationId}?token=${token}&domain=${encodeURIComponent(domain || '')}`;
         
         const websocket = new WebSocket(wsUrl);
         
@@ -529,8 +529,12 @@ const generateWebsiteId = async () => {
   try {
     // 发送 POST 请求到 /alternatively/generate/websiteId
     const response = await apiClient.post('/alternatively/generate/websiteId');
-    // 返回响应数据，通常包含生成的 websiteId
-    return response.data;
+    const data = response.data;
+    // 统一：若无 code 字段，则补充 code:200
+    if (data && typeof data === 'object' && 'code' in data) {
+      return data;
+    }
+    return { code: 200, data };
   } catch (error) {
     // 记录错误信息并重新抛出，以便调用者处理
     console.error('Failed to generate websiteId:', error);
@@ -965,8 +969,7 @@ const getWebsiteSitemap = async (websiteId: any) => {
 // 获取聊天历史列表 - 使用主API服务器
 const getChatHistoryList = async (conversationId: any, page: any, limit: any) => {
   try {
-    const params: any = {};
-    if (conversationId) params.conversationId = conversationId;
+    const params: any = { conversationId };
     if (page !== undefined) params.page = page;
     if (limit !== undefined) params.limit = limit;
     
@@ -1223,40 +1226,25 @@ apiClient.getGscSites = getGscSites;
 apiClient.getSiteAnalytics = getSiteAnalytics;
 apiClient.uploadFavicon = uploadFavicon;
 
-// WebSocket连接辅助函数
-export const createChatWebSocket = (conversationId: string) => {
+// WebSocket连接辅助函数 - 使用统一的WebSocketChatV2服务
+export const createChatWebSocket = async (conversationId: string, domain?: string) => {
   const token = localStorage.getItem('alternativelyAccessToken');
-  const wsUrl = `${CHAT_WS_URL}?conversationId=${conversationId}&token=${token}`;
-  return new WebSocket(wsUrl);
+  if (!token) {
+    throw new Error('未找到访问令牌');
+  }
+  
+  // 导入WebSocketChatV2服务
+  const { connectWebSocketChatV2 } = await import('./websocket-chat-v2');
+  
+  return await connectWebSocketChatV2(
+    conversationId,
+    undefined, // onMessage
+    undefined, // onError
+    undefined, // onClose
+    undefined, // onOpen
+    domain
+  );
 };
 
-// SSE连接辅助函数 - 已注释，改用WebSocket
-// export const createChatSSE = (conversationId: string) => {
-//   const token = localStorage.getItem('alternativelyAccessToken');
-//   const sseUrl = `${CHAT_API_URL}/api/chat/stream?conversationId=${conversationId}&token=${token}`;
-//   return new EventSource(sseUrl);
-// };
-
-// 使用示例：
-// 1. 传统HTTP聊天：
-// const response = await apiClient.chatWithAI('search', 'hello', 'conv123');
-//
-// 2. WebSocket流式聊天：
-// const { websocket } = await apiClient.chatWithAI('search', 'hello', 'conv123', (data) => {
-//   console.log('收到流式消息:', data);
-// });
-// // 记得在适当时机关闭连接
-// websocket.close();
-//
-// 3. 直接使用WebSocket连接：
-// const ws = createChatWebSocket('conv123');
-// ws.onmessage = (event) => {
-//   const data = JSON.parse(event.data);
-//   console.log('WebSocket消息:', data);
-// };
-// ws.onerror = (error) => {
-//   console.error('WebSocket错误:', error);
-//   ws.close();
-// };
 
 export default apiClient as ApiClient;

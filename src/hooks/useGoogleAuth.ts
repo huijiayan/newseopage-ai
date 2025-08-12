@@ -166,28 +166,15 @@ export const useGoogleAuth = ({
           callback: handleGoogleOneTapSuccess,
           cancel_on_tap_outside: false,
           prompt_parent_id: "google-one-tap-button",
-          // 为了兼容第三方 Cookie 被禁用的环境，强制使用 FedCM
-          use_fedcm_for_prompt: true,
-          // Safari/ITP 兼容
-          itp_support: true,
-          // 避免自动选择导致意外弹窗
+          // 添加额外配置以避免 FedCM 冲突
           auto_select: false,
+          use_fedcm_for_prompt: false
         });
 
         // 延迟调用 prompt 避免竞态条件
         initializationTimeout = setTimeout(() => {
           if (!isLoggedInRef.current && window.google?.accounts?.id) {
             window.google.accounts.id.prompt((notification: any) => {
-              // 记录更详细的不可展示/跳过原因，便于排查如 third-party cookies 被拦截等问题
-              try {
-                if (notification.isNotDisplayed()) {
-                  // 常见：第三方 Cookie 被禁用 → 使用 FedCM 已覆盖
-                  console.warn('Google One Tap not displayed:', notification.getNotDisplayedReason?.());
-                }
-                if (notification.isSkippedMoment()) {
-                  console.warn('Google One Tap skipped:', notification.getSkippedReason?.());
-                }
-              } catch {}
               if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
                 setIsOneTapShown(true);
               }

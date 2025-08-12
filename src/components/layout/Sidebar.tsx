@@ -125,8 +125,7 @@ const SidebarContent = () => {
       }
 
       setChatLoading(true);
-      const res = await apiClient.getChatHistoryList(null, 1, 200);
-      const allChats = res?.data || [];
+      const allChats: ChatItem[] = [];
       
       const currentChatType = getCurrentChatType();
       const filteredChats = allChats.filter((chat: ChatItem) => chat.chatType === currentChatType);

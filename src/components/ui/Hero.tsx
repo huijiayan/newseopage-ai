@@ -112,7 +112,11 @@ export const Hero: React.FC = () => {
 
   // 使用真实的 apiClient (已导入)
 
-  // 其他辅助函数（保留最小集）
+  // 其他辅助函数
+  const filterMessageTags = (text: string): string => text.replace(/\[.*?\]/g, '');
+  const handleWebsiteSitemapProcess = async (mainProduct: any, userInputUrl: string, conversationId: any, flag: boolean) => {
+    // 处理网站地图的逻辑
+  };
 
   const handleUserInput = async (eOrString: any) => {
     if (isSubmitting) return;
@@ -173,52 +177,59 @@ export const Hero: React.FC = () => {
       if (!tempConversationId) {
         setLoading(true);
         
-        // 第1次调用：创建新会话（不传conversationId）
+        // 首次调用chatWithAI，不传conversationId参数，让API创建新的会话
         let chatResponse;
+        let conversationId: string | null = null;
         try {
           console.log('🔍 Hero.tsx - 准备调用API，参数:', {
             chatType: getPageMode(),
             message: formattedInput,
             conversationId: tempConversationId
           });
+          
           chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
+          
+          // 检查响应格式 - chatWithAI接口已经生成conversationId
+          if (chatResponse && 'websocket' in chatResponse) {
+            // API响应中应该包含conversationId
+            if (chatResponse.conversationId) {
+              
+              // 更新状态并跳转
+              setCurrentConversationId(chatResponse.conversationId);
+              isFirstMessageSentForNewTaskRef.current = true;
 
-          // 必须拿到 conversationId
-          if (chatResponse && chatResponse.conversationId) {
-            const newConversationId = chatResponse.conversationId as string;
-            setCurrentConversationId(newConversationId);
-            isFirstMessageSentForNewTaskRef.current = true;
-            // 立即跳转到聊天室页面（不等待任何额外标记/调用）
-            // 同时把域名与会话信息存入本地，以便 ResearchTool 在挂载后继续流程
-            try {
-              localStorage.setItem('currentProductUrl', formattedInput);
-              localStorage.setItem('pendingNewChat', JSON.stringify({
-                conversationId: newConversationId,
-                domain: formattedInput,
-                mode: getPageMode(),
-              }));
-              // 通知侧边栏刷新
-              window.dispatchEvent(new CustomEvent('chatStarted'));
-            } catch {}
+              // 根据当前路径决定跳转目标
+              const currentPath = window.location.pathname;
+              let targetPath = '/alternative'; // 默认跳转到 alternative
 
-            // 跳转到聊天室页面
-            const currentPath = window.location.pathname;
-            let targetPath = '/alternative';
-            if (currentPath.includes('best')) targetPath = '/best';
-            else if (currentPath.includes('faq') || currentPath.includes('FAQ')) targetPath = '/FAQ';
-            else if (currentPath.includes('alternative')) targetPath = '/alternative';
+              if (currentPath.includes('best')) {
+                targetPath = '/best';
+              } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+                targetPath = '/FAQ';
+              } else if (currentPath.includes('alternative')) {
+                targetPath = '/alternative';
+              }
 
-            router.replace(`${targetPath}?conversationId=${newConversationId}`);
-            setMessages([]);
-            setShowSlogan(false);
+              // 跳转到聊天室页面，传递真实的conversationId
+              router.replace(`${targetPath}?conversationId=${chatResponse.conversationId}`);
+              
+              // 清空消息列表，因为要跳转到新页面
+              setMessages([]);
+              setShowSlogan(false);
+              
+              return;
+            } else {
+              messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
+              setIsMessageSending(false);
+              setLoading(false);
+              return;
+            }
+          } else {
+            messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
+            setIsMessageSending(false);
+            setLoading(false);
             return;
           }
-
-          // 未拿到 conversationId
-          messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
-          setIsMessageSending(false);
-          setLoading(false);
-          return;
         } catch (error) {
           messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
           setIsMessageSending(false);
@@ -226,6 +237,160 @@ export const Hero: React.FC = () => {
           return;
         }
         
+        // 非WebSocket模式，使用API返回的conversationId
+        if (conversationId) {
+          // 更新状态并修改URL
+          setCurrentConversationId(conversationId);
+          isFirstMessageSentForNewTaskRef.current = true;
+
+          // 根据当前路径决定跳转目标
+          const currentPath = window.location.pathname;
+          let targetPath = '/alternative'; // 默认跳转到 alternative
+
+          if (currentPath.includes('best')) {
+            targetPath = '/best';
+          } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+            targetPath = '/FAQ';
+          } else if (currentPath.includes('alternative')) {
+            targetPath = '/alternative';
+          }
+
+          // 跳转到聊天室页面，传递conversationId参数
+          router.replace(`${targetPath}?conversationId=${conversationId}`);
+          
+          // 清空消息列表，因为要跳转到新页面
+          setMessages([]);
+          setShowSlogan(false);
+          
+          // 跳转后不再处理后续逻辑，因为页面会重新加载
+          return;
+        }
+        
+        // 如果响应中包含answer，处理它
+        if (chatResponse && !('websocket' in chatResponse) && (chatResponse as any)?.message?.answer) {
+          const rawAnswer = (chatResponse as any).message.answer;
+          
+          // 处理URL_GET标记的情况
+          if (rawAnswer.includes('[URL_GET]')) {
+            localStorage.setItem('currentProductUrl', formattedInput);
+            messageHandler.updateAgentMessage(rawAnswer, thinkingMessageId);
+            
+            const searchResponse = await apiClient.searchCompetitor(
+              tempConversationId,
+              formattedInput
+            );
+            
+            if (searchResponse?.code === 1075) {
+              messageHandler.addSystemMessage("⚠️ There is a task in progress. Please select from the left chat list");
+              return;
+            }
+            
+            if (searchResponse?.code === 1058) {
+              messageHandler.updateAgentMessage("⚠️ Encountered a network error. Please try again.", thinkingMessageId);
+              setLoading(false);
+              return;
+            }
+
+            if (searchResponse?.code === 13002) {
+              messageHandler.updateAgentMessage("⚠️ Please subscribe before starting a task.", thinkingMessageId);
+              return;
+            }
+            
+            if (searchResponse?.code === 200) {
+              setShouldConnectWS(true);
+              window.dispatchEvent(new CustomEvent('chatStarted'));
+
+              if (searchResponse.data.sitemapStatus === 'generated') {
+                const userInputUrl = localStorage.getItem('currentProductUrl') || '';
+                await handleWebsiteSitemapProcess(getPageMode(), userInputUrl, tempConversationId, false);
+              }
+
+              if (searchResponse.data.sitemapStatus === 'ungenerated') {
+                messageHandler.addSystemMessage(
+                  "Agent starts working on find competitor list for you, it ususally takes a minute or two, please hold on..."
+                );
+                setIsProcessingTask(true);
+              }
+            }
+            
+            while (messageHandler.isProcessing) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+            setCanProcessCompetitors(true);
+            return; 
+          }
+          else {
+            const answer = filterMessageTags(rawAnswer);
+            messageHandler.updateAgentMessage(answer, thinkingMessageId);
+            setLoading(false);
+            return;
+          }
+        } 
+      }
+      
+      const response = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
+      // 检查响应格式
+      if (response && !('websocket' in response) && (response as any)?.message?.answer) {
+        const rawAnswer = (response as any).message.answer;
+        
+        if (rawAnswer.includes('[URL_GET]')) {
+          localStorage.setItem('currentProductUrl', formattedInput);
+          messageHandler.updateAgentMessage(rawAnswer, thinkingMessageId);
+          
+          const searchResponse = await apiClient.searchCompetitor(
+            tempConversationId,
+            formattedInput
+          );
+          
+          if (searchResponse?.code === 1075) {
+            messageHandler.addSystemMessage("⚠️ There is a task in progress. Please select from the left chat list");
+            return;
+          }
+          
+          if (searchResponse?.code === 1058) {
+            messageHandler.updateAgentMessage("⚠️ Encountered a network error. Please try again.", thinkingMessageId);
+            setLoading(false);
+            return;
+          }
+
+          if (searchResponse?.code === 13002) {
+            messageHandler.updateAgentMessage("⚠️ Please subscribe before starting a task.", thinkingMessageId);
+            return;
+          }
+          
+          if (searchResponse?.code === 200) {
+            setShouldConnectWS(true);
+            window.dispatchEvent(new CustomEvent('chatStarted'));
+
+            if (searchResponse.data.sitemapStatus === 'generated') {
+              const userInputUrl = localStorage.getItem('currentProductUrl') || '';
+              await handleWebsiteSitemapProcess(getPageMode(), userInputUrl, tempConversationId, false);
+            }
+
+            if (searchResponse.data.sitemapStatus === 'ungenerated') {
+              messageHandler.addSystemMessage(
+                "Agent starts working on find competitor list for you, it ususally takes a minute or two, please hold on..."
+              );
+              setIsProcessingTask(true);
+            }
+          }
+          
+          while (messageHandler.isProcessing) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          
+          setCanProcessCompetitors(true);
+          return; 
+        } else {
+          const answer = filterMessageTags(rawAnswer);
+          messageHandler.updateAgentMessage(answer, thinkingMessageId);
+          setLoading(false);
+          return;
+        }
+      } else {
+        messageHandler.updateAgentMessage('Failed to get response from server. Please try again.', thinkingMessageId);
+        setLoading(false);
       }
     } catch (error) {
       console.error('Error in handleUserInput:', error);

@@ -129,7 +129,7 @@ const CustomizableResearchUI = forwardRef<HTMLDivElement, {}>(({}, ref) => {
               className="mb-6 hover:scale-105 transition-transform duration-200"
             >
               <img 
-                src={`https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=967689&theme=${currentTheme}&period=daily&t=1748270618907`}
+                src={currentTheme === 'dark' ? "/icons/ph-badge-large-dark.svg" : "/icons/ph-badge-large-light.svg"}
                 alt="SEOPage.ai - Steal competitor brand traffic with alternative pages | Product Hunt" 
                 className="w-[250px] h-[54px]"
                 width="250" 

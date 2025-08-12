@@ -1,51 +1,30 @@
 // 这是整个聊天页面的主要功能组件
 
 "use client";
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMessage } from '@/components/ui/CustomMessage';
 import ChatInput from '@/components/ui/ChatInput';
-// 使用自定义图标替代 Ant Design 图标，避免 CSS-in-JS 冲突
-const InfoCircleIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-    <path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm0 14c-3.3 0-6-2.7-6-6s2.7-6 6-6 6 2.7 6 6-2.7 6-6 6z"/>
-    <path d="M7 7h2v5H7z"/>
-    <circle cx="8" cy="4" r="1"/>
-  </svg>
-);
-
-const UpIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-    <path d="M8 2L2 8h3v6h6V8h3L8 2z"/>
-  </svg>
-);
-
-const DownIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-    <path d="M8 14L2 8h3V2h6v6h3L8 14z"/>
-  </svg>
-);
+import { InfoCircleOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
 import type { ResearchToolProps } from '@/types/research-tool';
 import { useResearchTool } from './hooks/useResearchTool';
 import { useTheme } from './hooks/useTheme';
 import { TaskStatusBar } from './components/TaskStatusBar';
-import { CompetitorSearchStatusBar } from './components/CompetitorSearchStatusBar';
 import {
   filterMessageTags,
   linkifyDomains,
   isJsonArrayMessage,
   isDomainListMessage,
-  injectResearchToolStyles,
-  validateDomain
+  injectResearchToolStyles
 } from './utils/research-tool-utils';
- import apiClient from '@/lib/api';
- import { useWebSocketChat } from '@/hooks/useWebSocketChat';
-
+import apiClient from '@/lib/api';
+import { WebSocketConnection } from './components/WebSocketConnection';
+import type { WebSocketConnectionRef } from './components/WebSocketConnection';
+import { AIMessageStream } from '@/components/ui/AIMessageStream';
 
 // 这是整个聊天页面的主要功能组件
 export const ResearchTool: React.FC<ResearchToolProps> = ({
-  conversationId = null,
-  mode = 'normal'
+  conversationId = null
 }) => {
   // 注入样式
   useEffect(() => {
@@ -53,7 +32,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   }, []);
 
   // 添加主题配置
-  const { currentTheme, getThemeConfig, isHydrated } = useTheme();
+  const { currentTheme, getThemeConfig, isHydrated, switchTheme } = useTheme();
 
   // 获取research-tool主题配置，提供fallback避免hydration不匹配
   const themeStyles = isHydrated ? getThemeConfig('researchTool') : {
@@ -63,20 +42,64 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   // 添加缺失的状态变量
   const [thinkingLogExpanded, setThinkingLogExpanded] = React.useState<Record<string, boolean>>({});
   const messageApi = useMessage();
-  const [isRecoveryMode, setIsRecoveryMode] = React.useState(false);
+
   const [chatHistory, setChatHistory] = React.useState<any>(null);
   const [competitorModalMode, setCompetitorModalMode] = React.useState<'add' | 'edit'>('add');
   const [editingPage, setEditingPage] = React.useState<any>(null);
   const [currentWebsiteId, setCurrentWebsiteId] = React.useState<string>('');
   const [hubPageIds, setHubPageIds] = React.useState<string[]>([]);
-  const [sitemapStatus, setSitemapStatus] = React.useState<any>(null);
-  const [competitorSearchStatus, setCompetitorSearchStatus] = React.useState<any>(null);
-  const [competitorSearchStatusBarExpanded, setCompetitorSearchStatusBarExpanded] = React.useState(false);
+  const [currentDomain, setCurrentDomain] = React.useState<string>('');
+  const webSocketRef = React.useRef<WebSocketConnectionRef>(null);
+  // 最终 Markdown 文本（用于在 Generated Pages 面板中展示）
+  const [latestMarkdown, setLatestMarkdown] = useState<string>('');
+  // 调试：仅记录与 hubPageId 相关的发送/接收原始数据
+  const [isDebugOpen, setIsDebugOpen] = useState(false);
+  type DebugLevel = 'send' | 'recv' | 'info' | 'error';
+  interface IdDebugEntry { id: string; time: string; level: DebugLevel; hubId?: string; messageType?: string; raw: any }
+  const [idDebugLogs, setIdDebugLogs] = useState<IdDebugEntry[]>([]);
+  const recentHubIdsRef = useRef<string[]>([]);
+  const pushWatchedHubId = useCallback((hubId: string) => {
+    if (!hubId) return;
+    recentHubIdsRef.current = [hubId, ...recentHubIdsRef.current.filter(id => id !== hubId)].slice(0, 20);
+  }, []);
+  const logIdDebug = useCallback((level: DebugLevel, raw: any, hubId?: string, messageType?: string) => {
+    setIdDebugLogs(prev => [
+      { id: `${Date.now()}`, time: new Date().toLocaleString(), level, hubId, messageType, raw },
+      ...prev
+    ].slice(0, 200));
+  }, []);
+
+  // 监听localStorage中的域名变化
+  useEffect(() => {
+    const checkDomain = () => {
+      const domain = localStorage.getItem('currentDomain');
+      if (domain && domain !== currentDomain) {
+        console.log('🔍 检测到域名变化:', domain);
+        setCurrentDomain(domain);
+      }
+    };
+
+    // 初始检查
+    checkDomain();
+
+    // 监听storage事件
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'currentDomain') {
+        console.log('🔍 localStorage域名变化:', e.newValue);
+        setCurrentDomain(e.newValue || '');
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []); // 移除currentDomain依赖，避免无限循环
 
   const [startedTaskCountRef] = React.useState(React.useRef(0));
   const [retryCountRef] = React.useState(React.useRef(0));
   const [codeContainerRef] = React.useState(React.useRef<HTMLPreElement>(null));
-  const competitorSearchTriggeredRef = React.useRef(false);
 
   // 使用统一的状态管理hook
   const {
@@ -160,110 +183,248 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     // 路由相关
     router,
     pathname,
-  } = useResearchTool(conversationId, mode);
+  } = useResearchTool(conversationId);
 
   // WebSocket聊天功能
-  // WebSocket连接管理（本地UI状态，实际连接由useWebSocketChat管理）
+  // WebSocket连接管理
   const [wsConnected, setWsConnected] = useState(false);
   const [wsConnecting, setWsConnecting] = useState(false);
   const [wsConnectionState, setWsConnectionState] = useState('CLOSED');
   const [wsError, setWsError] = useState<string | null>(null);
 
-  const handleWebSocketMessage = (data: any) => {
-    console.log('🔍 WebSocket消息处理函数被调用:', data);
-    
-    // 使用增强的消息处理器处理WebSocket消息
-    messageHandler.handleWebSocketMessage(data);
-    
-    // 旧逻辑：根据 [URL_GET] 自动触发竞品搜索
-    // 已按需求移除，避免重复触发。竞品搜索仅在 Hero 中的新会话创建后触发。
-    
-    // 如果是sitemap状态更新，设置状态
-    if (data.type === 'sitemap_status') {
-      setSitemapStatus(data);
-    }
-    
-    // 如果是竞品搜索状态更新，设置状态
-    if (data.type === 'competitor_search') {
-      setCompetitorSearchStatus(data);
-    }
-  };
+  // 顺序队列与去重
+  const processedAiTextRef = useRef<Set<string>>(new Set());
+  type QueueItem =
+    | { kind: 'text'; content: string }
+    | { kind: 'hub_entries'; pageType?: string; entries: any[] };
+  const aiQueueRef = useRef<QueueItem[]>([]);
+  const isProcessingQueueRef = useRef(false);
 
-  // 获取竞品分析结果
-  const getCompetitorAnalysisResults = async (websiteId: string) => {
-    try {
-      console.log('🔍 ===== 竞品分析结果函数被调用 =====');
-      console.log('🔍 开始获取竞品分析结果，websiteId:', websiteId);
-      
-      // 1. 首先获取网站地图（包含竞品信息）
-      const sitemapData = await apiClient.getWebsiteSitemap(websiteId);
-      console.log('🔍 网站地图数据:', sitemapData);
-      
-      // 2. 获取竞品来源信息
-      const sourcesData = await apiClient.getAlternativeSources(websiteId);
-      console.log('🔍 竞品来源:', sourcesData);
-      
-      // 3. 获取竞品分析详情
-      const detailData = await apiClient.getAlternativeDetail(websiteId);
-      console.log('🔍 竞品分析详情:', detailData);
-      
-      // 4. 最后获取竞品分析结果
-      const resultData = await apiClient.getAlternativeResult(websiteId);
-      console.log('🔍 竞品分析结果:', resultData);
-      
-    } catch (error) {
-      console.error('🔍 获取竞品分析结果失败:', error);
-    }
-  };
+  const typewriteToChatSequential = useCallback(async (fullText: string) => {
+    const messageId = messageHandler.addAgentThinkingMessage();
+    const baseDelay = 24;
+    return await new Promise<void>((resolve) => {
+      let current = '';
+      let idx = 0;
+      const step = () => {
+        if (idx >= fullText.length) {
+          messageHandler.updateAgentMessage(current, messageId);
+          resolve();
+          return;
+        }
+        current += fullText[idx++];
+        messageHandler.updateAgentMessage(current, messageId);
+        const ch = current[current.length - 1];
+        const extra = ch === '\n' ? baseDelay * 3 : (',.;!?'.includes(ch) ? baseDelay * 2 : 0);
+        setTimeout(step, baseDelay + extra);
+      };
+      step();
+    });
+  }, [messageHandler]);
 
-  // 处理竞品搜索
-  const handleCompetitorSearch = async (formattedInput: string) => {
-    console.log('🔍 ===== 竞品搜索函数被调用 =====');
-    console.log('🔍 功能: 开始搜索竞争对手');
-    console.log('🔍 参数: formattedInput =', formattedInput);
-    console.log('🔍 当前conversationId:', currentConversationId);
-    
+  const transformHubEntriesToPages = useCallback((entries: any[]) => {
+    return (entries || []).map((e: any) => ({
+      hubPageId: e.id || e.hubPageId || '',
+      websiteId: e.websiteId || '',
+      pageTitle: e.pageTitle || '',
+      description: e.description || '',
+      relatedKeywords: e.relatedKeywords || [],
+      trafficPotential: e.trafficPotential ?? '-',
+      difficulty: e.difficulty ?? '-',
+      competitors: e.competitors || [],
+      isPageGenerated: !!e.isPageGenerated,
+      generatedPageId: e.generatedPageId || '',
+      pageType: e.pageType || 'alternative',
+      source: e.source || 'ai',
+      logo: e.logo,
+    }));
+  }, []);
+
+  const processAIQueue = useCallback(async () => {
+    if (isProcessingQueueRef.current) return;
+    isProcessingQueueRef.current = true;
     try {
-      const competitorSearchResponse = await apiClient.searchCompetitor(currentConversationId, formattedInput);
-      
-      // 检查任务状态 (sitemapStatus)
-      if (competitorSearchResponse?.code === 200) {
-        console.log('🔍 竞品搜索成功，开始检查sitemap状态');
-        
-        // 如果有websiteId，检查sitemap状态
-        if (competitorSearchResponse.data?.websiteId) {
-          const websiteId = competitorSearchResponse.data.websiteId;
-          console.log('🔍 搜索完成之后，还要检查sitemapstatus网站地图的处理');
-          console.log('🔍 这些数据通过实时聊天将后端的数据推到前端');
-          
-          // 检查sitemap状态
+      while (aiQueueRef.current.length > 0) {
+        const item = aiQueueRef.current.shift()!;
+        if (item.kind === 'text') {
+          await typewriteToChatSequential(item.content);
+        } else if (item.kind === 'hub_entries') {
           try {
-            const sitemapResponse = await apiClient.getWebsiteSitemap(websiteId);
-            console.log('🔍 sitemap状态响应:', sitemapResponse);
-            
-            if (sitemapResponse?.code === 200) {
-              setSitemapStatus(sitemapResponse.data);
-              messageHandler.addSystemMessage('🔄 网站地图处理中...');
-              
-              // 获取完整的竞品分析结果
-              await getCompetitorAnalysisResults(websiteId);
-            }
-          } catch (sitemapError) {
-            console.error('🔍 检查sitemap状态失败:', sitemapError);
+            const pages = transformHubEntriesToPages(item.entries);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `pages-grid-${Date.now()}`,
+                type: 'pages-grid',
+                content: '',
+                pages,
+                pageType: item.pageType || 'alternative',
+                timestamp: new Date().toISOString(),
+              } as any,
+            ]);
+          } catch (err) {
+            messageHandler.addSystemMessage('⚠️ 候选卡片生成失败，请重试');
           }
         }
-      } else if (competitorSearchResponse?.code === 1075) {
-        messageHandler.addSystemMessage('⚠️ There is a task in progress. Please select from the left chat list');
-      } else if (competitorSearchResponse?.code === 1058) {
-        messageHandler.addSystemMessage('⚠️ Encountered a network error. Please try again.');
-      } else if (competitorSearchResponse?.code === 13002) {
-        messageHandler.addSystemMessage('⚠️ Please subscribe before starting a task.');
-      } else {
-        messageHandler.addSystemMessage('⚠️ 竞品搜索失败');
       }
-    } catch (competitorError) {
-      console.error('🔍 竞品搜索失败:', competitorError);
-      messageHandler.addSystemMessage('⚠️ 竞品搜索失败');
+    } finally {
+      isProcessingQueueRef.current = false;
+    }
+  }, [setMessages, transformHubEntriesToPages, typewriteToChatSequential]);
+
+  // 便捷函数：将预览链接添加到右侧 Generated Pages 面板
+  const addPreviewTab = useCallback((url: string, title?: string) => {
+    if (!url) return;
+    setBrowserTabs(prev => {
+      // 去重
+      if (prev.some(t => t.url === url)) return prev;
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const newTab = { id, title: title || 'Preview', url } as any;
+      // 激活新标签
+      setActiveTab(id);
+      return [...prev, newTab];
+    });
+  }, [setActiveTab, setBrowserTabs]);
+
+  // 勾选/点击 Edit 时，通过 WebSocket 的 message.type 传递 hubPageId
+  const sendSelectedHubId = useCallback((hubId: string) => {
+    try {
+      if (webSocketRef.current && webSocketRef.current.isConnected) {
+        const msg = {
+          type: 'message',
+          content: hubId,
+          timestamp: new Date().toISOString(),
+        } as any;
+        pushWatchedHubId(hubId);
+        logIdDebug('send', msg, hubId, 'message');
+        webSocketRef.current.sendMessage(msg);
+      }
+    } catch {}
+  }, []);
+
+  const handleWebSocketMessage = (data: any) => {
+    console.log('🔍 收到WebSocket消息 - 原始内容:', data);
+    console.log('🔍 消息类型:', typeof data);
+    try { console.log('🔍 消息结构:', typeof data === 'string' ? data : JSON.stringify(data, null, 2)); } catch {}
+
+    // 兼容字符串消息（某些后端直接发送字符串）
+    let payload: any = data;
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch { /* ignore */ }
+    }
+    
+    const isToolCall = !!(payload && (payload.event === 'tool_call' || payload.type === 'tool_call'));
+    const isToolResult = !!(payload && (payload.event === 'tool_result' || payload.type === 'tool_result'));
+
+    try {
+      if (isToolCall) {
+        const arr = Array.isArray(payload?.payload?.args?.state?.messages)
+          ? payload.payload.args.state.messages
+          : [];
+
+        for (const item of arr) {
+          if (item?.type === 'user_message') continue; // 跳过用户输入
+
+          // 捕获 markdown 消息
+          if (item?.type === 'markdown' || typeof item?.markdown === 'string') {
+            const md = typeof item?.markdown === 'string' ? item.markdown : (typeof item?.content === 'string' ? item.content : '');
+            if (md) setLatestMarkdown(md);
+            continue;
+          }
+
+          if (typeof item?.content === 'string' && item.content.trim().length > 0) {
+            if (!processedAiTextRef.current.has(item.content)) {
+              processedAiTextRef.current.add(item.content);
+              aiQueueRef.current.push({ kind: 'text', content: item.content });
+            }
+            continue;
+          }
+
+          // 按需忽略 website 详情对象
+
+          if (Array.isArray(item?.hub_entries)) {
+            const entries = item.hub_entries;
+            const count = entries.length;
+            // 在卡片前插入一条提示气泡
+            aiQueueRef.current.push({ kind: 'text', content: `已找到 ${count} 个候选页面，请在下方卡片中勾选后点击生成。` });
+            aiQueueRef.current.push({ kind: 'hub_entries', pageType: item.page_type, entries });
+            continue;
+          }
+        }
+        console.log('🔍 tool_call 解析完成，入队数量:', aiQueueRef.current.length);
+      }
+
+      if (isToolResult) {
+        // 解析 tool_result 的 hub_entries（常见在 payload.output.hub_entries）
+        const output = payload?.payload?.output || payload?.output || {};
+        const hubEntries = Array.isArray(output?.hub_entries) ? output.hub_entries : [];
+        const pageType = output?.page_type || output?.pageType;
+        // 捕获 markdown 文本
+        const possibleMarkdown = output?.markdown || output?.final_markdown || payload?.payload?.markdown || payload?.markdown;
+        if (typeof possibleMarkdown === 'string' && possibleMarkdown.trim().length > 0) {
+          setLatestMarkdown(possibleMarkdown);
+        }
+        if (hubEntries.length > 0) {
+          const count = hubEntries.length;
+          // 在卡片前插入一条提示气泡
+          aiQueueRef.current.push({ kind: 'text', content: `已找到 ${count} 个候选页面，请在下方卡片中勾选后点击生成。` });
+          aiQueueRef.current.push({ kind: 'hub_entries', pageType, entries: hubEntries });
+          console.log('🔍 tool_result 检测到 hub_entries，数量:', hubEntries.length);
+        }
+
+        // 如果返回了生成完成的页面ID，自动打开右侧预览标签
+        const generatedId = output?.generated_page_id || output?.generatedPageId || output?.result_id || output?.resultId;
+        if (typeof generatedId === 'string' && generatedId.trim().length > 0) {
+          const previewUrl = `https://preview.websitelm.site/en/${generatedId}`;
+          addPreviewTab(previewUrl, `Preview ${generatedId.slice(0, 6)}`);
+          // 命中最近的 hubIds 则记录调试
+          const matchedHub = recentHubIdsRef.current.find(id => typeof id === 'string' && id.length > 0);
+          logIdDebug('recv', payload, matchedHub, 'tool_result');
+        }
+      }
+    } catch (e) {
+      console.warn('解析 tool 消息失败', e);
+    }
+
+    // 顺序处理队列
+    processAIQueue();
+    
+    // 处理其他类型的消息
+    if (payload.type) {
+      // 根据消息类型添加到相应的消息列表
+      switch (payload.type) {
+        case 'markdown': {
+          const md = typeof payload.content === 'string' ? payload.content : (typeof payload.markdown === 'string' ? payload.markdown : '');
+          if (md) setLatestMarkdown(md);
+          break;
+        }
+        case 'message':
+        case 'agent':
+          messageHandler.addSystemMessage(payload.content);
+          break;
+        case 'error':
+          messageHandler.addSystemMessage(`❌ 错误: ${payload.content}`);
+          break;
+        case 'system':
+          messageHandler.addSystemMessage(payload.content);
+          break;
+        default:
+          // 对于未知类型的消息，作为系统消息处理
+          if (typeof payload?.markdown === 'string') {
+            setLatestMarkdown(payload.markdown);
+          } else if (typeof payload?.content === 'string') {
+            messageHandler.addSystemMessage(payload.content);
+          }
+          // 解析可能包含的生成页面ID
+          const genId = payload?.generated_page_id || payload?.generatedPageId || payload?.result_id || payload?.resultId;
+          if (typeof genId === 'string' && genId.trim().length > 0) {
+            const previewUrl = `https://preview.websitelm.site/en/${genId}`;
+            addPreviewTab(previewUrl, `Preview ${genId.slice(0, 6)}`);
+            const matchedHub = recentHubIdsRef.current.find(id => typeof id === 'string' && id.length > 0);
+            logIdDebug('recv', payload, matchedHub, 'default');
+          }
+          break;
+      }
     }
   };
 
@@ -286,54 +447,17 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     setWsConnected(true);
     setWsConnectionState('OPEN');
     setWsError(null);
-    messageHandler.addSystemMessage('🔗 WebSocket连接已建立');
+    // messageHandler.addSystemMessage('🔗 WebSocket连接已建立，可以开始实时聊天');
   };
-
-  // 使用统一的 WebSocket Chat Hook 来建立与管理连接
-  const { connect: connectWebSocketChat, disconnect: disconnectWebSocketChat } = useWebSocketChat({
-    onMessage: handleWebSocketMessage,
-    onOpen: handleWebSocketOpen,
-    onError: handleWebSocketError,
-    onClose: handleWebSocketClose,
-  });
-
-  // 当拿到 conversationId 时，建立 WebSocket 连接；组件卸载或会话变更时断开
-  // 仅在“无历史的新会话”进入时才连接 WS：
-  // Hero 会在新会话创建时不带历史地跳转，这里判断 localStorage 标记决定是否连接
-  useEffect(() => {
-    if (!currentConversationId) return;
-    // 防抖：如果已为该会话建立连接则不重复
-    const alreadyConnectedFor = (window as any).__wsConnectedFor;
-    if (alreadyConnectedFor === currentConversationId) return;
-
-    const pendingRaw = localStorage.getItem('pendingNewChat');
-    if (pendingRaw) {
-      try {
-        const pending = JSON.parse(pendingRaw);
-        (window as any).__wsConnectedFor = currentConversationId;
-        connectWebSocketChat(currentConversationId);
-        if (!competitorSearchTriggeredRef.current && pending?.domain) {
-          (async () => {
-            try {
-              // 先补发一条聊天消息到后端，确保会话上下文中有用户输入
-              await apiClient.chatWithAI(getPageMode(), pending.domain, currentConversationId);
-            } catch (e) {
-              console.warn('补发 chatWithAI 失败（继续竞品搜索流程）:', e);
-            }
-            competitorSearchTriggeredRef.current = true;
-            handleCompetitorSearch(pending.domain);
-          })();
-        }
-      } catch {}
-    }
-    return () => {
-      disconnectWebSocketChat();
-    };
-  }, [currentConversationId]);
 
   // 自动检测URL参数并建立WebSocket连接
   useEffect(() => {
     try {
+      console.log('🔍 ===== 开始自动检测URL参数 =====');
+      console.log('🔍 当前URL:', typeof window !== 'undefined' ? window.location.href : 'SSR环境');
+      console.log('🔍 传入的conversationId:', conversationId);
+
+      console.log('🔍 当前currentConversationId:', currentConversationId);
       
       // 1. 自动检测：URL中的conversationId参数
       const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
@@ -345,13 +469,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       let shouldRecover = false;
       
       if (targetConversationId) {
-        
-        // 如果URL中有conversationId或传入的mode是recover，则进入恢复模式
-        if (urlConversationId || mode === 'recover') {
-          shouldRecover = true;
-          console.log('🔍 设置为恢复模式');
-          setIsRecoveryMode(true);
-        }
+        console.log('🔍 检测到conversationId');
+        console.log('🔍 目标conversationId:', targetConversationId);
         
         // 设置conversationId - 避免无限循环
         if (targetConversationId !== currentConversationId) {
@@ -359,28 +478,31 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           setCurrentConversationId(targetConversationId);
         }
       } else {
-        console.log('🔍 未检测到conversationId，保持正常模式');
+        console.log('🔍 未检测到conversationId');
       }
+      
+      console.log('🔍 ===== URL参数检测完成 =====');
     } catch (error: any) {
+      console.error('🔍 URL参数检测过程中发生错误:', error);
+      console.error('🔍 错误详情:', {
+        message: error?.message || '未知错误',
+        stack: error?.stack || '无堆栈信息'
+      });
     }
-  }, [conversationId, mode]); // 移除currentConversationId依赖，避免无限循环
+  }, [conversationId]); // 移除currentConversationId依赖，避免无限循环
 
   // 当conversationId变化时，自动获取聊天历史并建立WebSocket连接
   useEffect(() => {
     try {
       if (currentConversationId) {
-        
-        // 3. 自动获取：聊天历史数据（若是新会话 pendingNewChat 则不取历史，避免被误判为旧会话）
-        const hasPendingNewChat = !!localStorage.getItem('pendingNewChat');
-        if (!hasPendingNewChat && (mode === 'recover' || conversationId || isRecoveryMode)) {
-          console.log('🔍 开始恢复聊天历史记录');
-          loadChatHistory(currentConversationId);
-        }
+        console.log('🔍 ===== 开始处理conversationId变化 =====');
+        console.log('🔍 conversationId已设置:', currentConversationId);
         
         // 4. 自动连接：建立WebSocket连接
-        // WebSocket连接会在组件渲染时自动建立
-        
-        console.log('🔍 ===== conversationId变化处理完成 =====');
+        if (!wsConnected && wsConnectionState === 'CLOSED') {
+          // 这里会触发WebSocket连接建立
+          // WebSocket连接会在组件渲染时自动建立
+        }
       }
     } catch (error: any) {
       console.error('🔍 conversationId变化处理过程中发生错误:', error);
@@ -389,72 +511,13 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         stack: error?.stack || '无堆栈信息'
       });
     }
-  }, [currentConversationId, mode, conversationId, isRecoveryMode]);
+  }, [currentConversationId]); // 简化依赖，避免循环
 
-  // 加载聊天历史记录
+  // 加载聊天历史记录 - 已删除API调用
   const loadChatHistory = async (conversationId: string) => {
     console.log('🔍 ===== 开始加载聊天历史记录 =====');
-    
-    try {
-      console.log('🔍 调用API获取聊天历史...');
-      const historyResponse = await apiClient.getAlternativeChatHistory(conversationId);
-      console.log('🔍 聊天历史API响应:', historyResponse);
-      
-      if (historyResponse?.code === 200 && historyResponse.data) {
-        console.log('🔍 API调用成功，开始处理历史数据');
-        console.log('🔍 原始历史数据条数:', historyResponse.data.length);
-        
-        // 按时间顺序显示所有消息
-        const sortedMessages = historyResponse.data.sort((a: any, b: any) => 
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        );
-        console.log('🔍 排序后历史数据条数:', sortedMessages.length);
-        
-        // 恢复消息到界面
-        let userMessageCount = 0;
-        let agentMessageCount = 0;
-        
-        sortedMessages.forEach((msg: any, index: number) => {
-          console.log(`🔍 处理第${index + 1}条历史消息:`, {
-            source: msg.source,
-            content: msg.content?.substring(0, 50) + (msg.content?.length > 50 ? '...' : ''),
-            timestamp: msg.timestamp
-          });
-          
-          if (msg.source === 'user') {
-            messageHandler.addUserMessage(msg.content);
-            userMessageCount++;
-            console.log('🔍 已添加用户消息');
-          } else if (msg.source === 'agent') {
-            messageHandler.addAgentThinkingMessage();
-            messageHandler.updateAgentMessage(msg.content, `thinking-${Date.now()}`);
-            agentMessageCount++;
-            console.log('🔍 已添加AI消息');
-          }
-        });
-        
-        console.log('🔍 聊天历史记录恢复完成');
-        console.log('🔍 恢复的用户消息数:', userMessageCount);
-        console.log('🔍 恢复的AI消息数:', agentMessageCount);
-        console.log('🔍 总恢复消息数:', userMessageCount + agentMessageCount);
-      } else {
-        console.log('🔍 API响应异常:', historyResponse);
-        if (historyResponse?.code !== 200) {
-          console.log('🔍 API返回错误码:', historyResponse?.code);
-        }
-        if (!historyResponse?.data) {
-          console.log('🔍 API返回数据为空');
-        }
-      }
-    } catch (error: any) {
-      console.error('🔍 加载聊天历史记录失败:', error);
-      console.error('🔍 错误详情:', {
-        message: error?.message || '未知错误',
-        stack: error?.stack || '无堆栈信息'
-      });
-      // 固定端点策略：不再尝试备用接口
-    }
-    
+    console.log('🔍 目标conversationId:', conversationId);
+    console.log('🔍 ✅ 跳过聊天历史API调用，不加载历史记录');
     console.log('🔍 ===== 聊天历史记录加载完成 =====');
   };
 
@@ -503,50 +566,32 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     }
   };
 
-  // 根据域名查找websiteId的函数
+  // 根据域名查找websiteId的函数 (不调用历史记录)
   const findWebsiteIdByDomain = async (domain: string): Promise<string | null> => {
     try {
       console.log('🔍 根据域名查找websiteId:', domain);
+      console.log('🔍 ✅ 跳过历史记录获取，直接生成新的websiteId');
       
-      // 获取网站列表进行匹配
-      const websiteListResponse = await apiClient.getAlternativeWebsiteList();
-      
-      if (websiteListResponse?.code === 200 && websiteListResponse.data) {
-        const websites = websiteListResponse.data;
-        console.log('🔍 获取到网站列表:', websites.length, '个网站');
-        
-        // 使用includes进行模糊匹配
-        const matchedWebsite = findWebsiteByDomain(domain, websites);
-        
-        if (matchedWebsite) {
-          console.log('🔍 找到匹配的网站:', matchedWebsite);
-          return matchedWebsite.websiteId || matchedWebsite.id;
+      // 不调用历史记录API，直接生成新的websiteId
+      try {
+        const generateResponse = await apiClient.generateWebsiteId();
+        if (generateResponse?.code === 200 && generateResponse.data?.websiteId) {
+          console.log('🔍 ✅ 生成新的websiteId:', generateResponse.data.websiteId);
+          return generateResponse.data.websiteId;
         } else {
-          console.log('🔍 未找到匹配的网站，使用回退机制');
-          // 回退机制：使用第一个网站或生成新的websiteId
-          if (websites.length > 0) {
-            const fallbackWebsite = websites[0];
-            console.log('🔍 使用回退网站:', fallbackWebsite);
-            return fallbackWebsite.websiteId || fallbackWebsite.id;
-          } else {
-            console.log('🔍 网站列表为空，尝试生成新的websiteId');
-            // 尝试生成新的websiteId
-            try {
-              const generateResponse = await apiClient.generateWebsiteId();
-              if (generateResponse?.code === 200 && generateResponse.data?.websiteId) {
-                console.log('🔍 生成新的websiteId:', generateResponse.data.websiteId);
-                return generateResponse.data.websiteId;
-              }
-            } catch (error) {
-              console.error('🔍 生成websiteId失败:', error);
-            }
-          }
+          console.log('🔍 ⚠️ 生成websiteId失败，使用回退方案');
+          // 回退方案：生成一个基于时间戳的websiteId
+          const fallbackWebsiteId = `generated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          console.log('🔍 使用回退websiteId:', fallbackWebsiteId);
+          return fallbackWebsiteId;
         }
-      } else {
-        console.error('🔍 获取网站列表失败:', websiteListResponse);
+      } catch (error: any) {
+        console.error('🔍 生成websiteId失败:', error);
+        // 最后的回退方案
+        const fallbackWebsiteId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        console.log('🔍 使用最终回退websiteId:', fallbackWebsiteId);
+        return fallbackWebsiteId;
       }
-      
-      return null;
     } catch (error: any) {
       console.error('🔍 查找websiteId失败:', error);
       return null;
@@ -628,16 +673,46 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     try {
       setIsMessageSending(true);
       setIsSubmitting(true);
+      // 优先走 WebSocket 实时流程（勾选时已发送固定ID触发生成）
+      if (webSocketRef.current && webSocketRef.current.isConnected) {
+        setCurrentStep(3);
+        startedTaskCountRef.current += (data?.hubPageIds?.length || 0);
+        messageHandler.addSystemMessage('System is analyzing competitors and generating pages, please wait...');
+        retryCountRef.current = 0;
+        setHubPageIds([]);
+        setSelectedCompetitors([]);
+        setUserInput('');
+        setIsProcessingTask(true);
+        return;
+      }
+
+      // 兜底：若当前无 WebSocket 连接，则使用 REST API 触发生成，并确保 websiteId 存在
+      let ensureConversationId = data?.conversationId || currentConversationId;
+      let ensureWebsiteId = data?.websiteId || currentWebsiteId;
+
+      try {
+        if (!ensureWebsiteId) {
+          const genIdResp = await apiClient.generateWebsiteId();
+          if (genIdResp?.code === 200) {
+            ensureWebsiteId = genIdResp?.data?.websiteId || ensureWebsiteId;
+            if (ensureWebsiteId) setCurrentWebsiteId(ensureWebsiteId);
+          }
+        }
+      } catch {}
 
       const generateResponse = await apiClient.generateAlternative(
-        data.conversationId,
-        data.hubPageIds,
-        data.websiteId
+        ensureConversationId,
+        data?.hubPageIds || hubPageIds,
+        ensureWebsiteId
       );
 
-      if (generateResponse?.code === 200) {
+      if (
+        generateResponse?.code === 200 ||
+        generateResponse?.success === true ||
+        generateResponse?.status === 'success'
+      ) {
         setCurrentStep(3);
-        startedTaskCountRef.current += data.hubPageIds.length;
+        startedTaskCountRef.current += (data?.hubPageIds?.length || hubPageIds.length);
         messageHandler.addSystemMessage('System is analyzing competitors and generating pages, please wait...');
         retryCountRef.current = 0;
         setHubPageIds([]);
@@ -645,7 +720,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         setUserInput('');
         setIsProcessingTask(true);
       } else {
-        messageHandler.addSystemMessage(`⚠️ Failed to generate alternative pages: Invalid server response`);
+        const detail = typeof generateResponse === 'object' ? JSON.stringify(generateResponse) : String(generateResponse);
+        messageHandler.addSystemMessage(`⚠️ Failed to generate alternative pages: Invalid server response\n${detail}`);
       }
     } catch (error: any) {
       messageHandler.addSystemMessage(`⚠️ Failed to process competitor selection: ${error.message}`);
@@ -669,14 +745,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     }
     if (!formattedInput || isMessageSending) return;
 
-    // 域名验证
-    if (currentStep === 0) {
-      if (!validateDomain(formattedInput)) {
-        messageApi.error('Please enter a valid website domain');
-        return;
-      }
-    }
-
     // --- 添加用户消息并显示思考状态 ---
     messageHandler.addUserMessage(formattedInput);
     const thinkingMessageId = messageHandler.addAgentThinkingMessage();
@@ -690,22 +758,33 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       const processedDomain = formattedInput;
       localStorage.setItem('currentDomain', processedDomain);
       localStorage.setItem('currentProductUrl', formattedInput);
-      console.log('🔍 域名已存储:', processedDomain);
+      
+      // 只有当域名真正变化时才更新状态
+      if (processedDomain !== currentDomain) {
+        setCurrentDomain(processedDomain);
+        console.log('🔍 域名已更新:', processedDomain);
+      } else {
+        console.log('🔍 域名未变化，跳过状态更新:', processedDomain);
+      }
 
       // 根据图片规则：用户发送第一条消息创建聊天室
       let tempConversationId = currentConversationId;
 
-      // 如果没有conversationId，通过chat接口获取一个新的
       if (!tempConversationId) {
         setLoading(true);
-        try {
-          const chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
+        // 用户发送第一条消息，API自动创建聊天室并返回WebSocket连接
+        const chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, null);
+
+        // 检查响应格式 - 可能返回WebSocket对象或包含conversationId的对象
+        if (chatResponse && 'websocket' in chatResponse) {
+  
           
-          // 获取并保存新的conversationId
-          if (chatResponse && chatResponse.conversationId) {
+          // 检查API响应中是否包含conversationId
+          if (chatResponse.conversationId) {
+            console.log('🔍 从API响应中获取到conversationId:', chatResponse.conversationId);
             tempConversationId = chatResponse.conversationId;
             setCurrentConversationId(tempConversationId);
-            
+
             // 实时更新URL
             const currentPath = window.location.pathname;
             let targetPath = '/alternative';
@@ -717,17 +796,37 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               targetPath = '/alternative';
             }
             router.replace(`${targetPath}?conversationId=${tempConversationId}`);
-            
-            console.log('🔍 conversationId已获取并存储:', tempConversationId);
           } else {
-            // 后端未直接返回conversationId，交由上方useWebSocketChat连接后续消息
-            messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
-            setIsMessageSending(false);
-            setLoading(false);
-            return;
+
+            // 等待WebSocket消息中的conversationId
+            const websocket = chatResponse.websocket;
+            websocket.onmessage = (event) => {
+              try {
+                const data = JSON.parse(event.data);
+        
+                
+                if (data.conversationId) {
+                  console.log('🔍 收到后端返回的conversationId:', data.conversationId);
+                  setCurrentConversationId(data.conversationId);
+                  
+                  // 实时更新URL
+                  const currentPath = window.location.pathname;
+                  let targetPath = '/alternative';
+                  if (currentPath.includes('best')) {
+                    targetPath = '/best';
+                  } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+                    targetPath = '/FAQ';
+                  } else if (currentPath.includes('alternative')) {
+                    targetPath = '/alternative';
+                  }
+                  router.replace(`${targetPath}?conversationId=${data.conversationId}`);
+                }
+              } catch (error) {
+                console.error('🔍 解析WebSocket消息失败:', error);
+              }
+            };
           }
-        } catch (error) {
-          console.error('🔍 创建聊天失败:', error);
+        } else {
           messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
           setIsMessageSending(false);
           setLoading(false);
@@ -735,15 +834,36 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         }
       }
 
-      // 处理响应 - 使用API告知后端；WebSocket连接由hook负责
+      // 通过WebSocket发送业务请求
       try {
-        await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
+        console.log('🔍 准备通过WebSocket发送业务请求:', formattedInput);
+        
+        // 检查WebSocket连接状态
+        if (webSocketRef.current && webSocketRef.current.isConnected) {
+          // 通过WebSocket发送消息
+          const message = {
+            type: 'user_message',
+            content: formattedInput,
+            domain: currentDomain,
+            conversationId: currentConversationId,
+            timestamp: new Date().toISOString()
+          };
+          
+          console.log('🔍 发送WebSocket业务消息:', message);
+          
+          // 通过WebSocket发送消息
+          const success = webSocketRef.current.sendMessage(message);
+          if (success) {
+            messageHandler.updateAgentMessage('消息已发送，等待后端处理...', thinkingMessageId);
+          } else {
+            messageHandler.updateAgentMessage('发送消息失败，请检查连接状态', thinkingMessageId);
+          }
+        } else {
+          messageHandler.updateAgentMessage('WebSocket连接未建立，请稍后重试', thinkingMessageId);
+        }
       } catch (error) {
-        console.error('🔍 通过API发送消息失败:', error);
-        messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
-        setIsMessageSending(false);
-        setLoading(false);
-        return;
+        console.error('WebSocket发送失败:', error);
+        messageHandler.updateAgentMessage('发送WebSocket消息失败，请稍后重试', thinkingMessageId);
       }
     } catch (error) {
       // 静默处理错误
@@ -758,6 +878,47 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
   // 对应老代码第1255-2155行的renderChatMessage函数
   const renderChatMessage = (message: any, index: number) => {
+    // 处理域名信息消息
+    if (message.type === 'domain_info') {
+      return (
+        <div
+          key={message.id || `domain-info-${index}`}
+          className="flex justify-start mb-4"
+          style={{ animation: 'fadeIn 0.5s ease-out forwards' }}
+        >
+          <div className="w-full flex flex-col items-start">
+            <div className="relative w-full">
+              <div
+                className={`px-4 py-3 w-full hover:shadow-slate-500/20 transition-all duration-300 transform hover:-translate-y-0.5 rounded-xl ${isHydrated ? themeStyles.systemMessage?.background : 'bg-blue-500/10'} ${isHydrated ? themeStyles.systemMessage?.border : 'border-blue-500/20'} border`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
+                    <span className="text-blue-500 text-lg">🌐</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`${isHydrated ? themeStyles.systemMessage?.text : 'text-blue-100'} font-medium text-sm mb-1`}>
+                      域名信息
+                    </div>
+                    <div className={`${isHydrated ? themeStyles.systemMessage?.text : 'text-blue-200'} text-sm`}>
+                      {message.content}
+                    </div>
+                    {message.domain && (
+                      <div className="mt-2 text-xs text-blue-300/70">
+                        域名: {message.domain}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-400 mt-2 ml-11">
+                  {new Date(message.timestamp || Date.now()).toLocaleString()}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (message.type === 'thinking-log-group') {
       const isExpanded = thinkingLogExpanded[message.id] !== false;
 
@@ -1064,10 +1225,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           <div className="max-w-[80%]">
             <div className="bg-slate-700 border-l-4 border-blue-500 p-3 rounded-r-md shadow-sm">
               <div className="text-white text-sm font-medium">
-                {message.content.split('\n').map((line: string, i: number) => (
+                {(typeof message.content === 'string' ? message.content : '').split('\n').map((line: string, i: number) => (
                   <React.Fragment key={i}>
                     {line}
-                    {i < message.content.split('\n').length - 1 && <br />}
+                    {i < (typeof message.content === 'string' ? message.content : '').split('\n').length - 1 && <br />}
                   </React.Fragment>
                 ))}
               </div>
@@ -1264,12 +1425,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                 }}
               >
                 <div className="flex items-start gap-3">
-                  <InfoCircleIcon />
+                  <InfoCircleOutlined className={`${isHydrated ? themeStyles.systemMessage?.iconColor : 'text-slate-400'} text-lg mt-0.5 flex-shrink-0`} />
                   <span className="leading-relaxed">
-                    {message.content.split('\n').map((line: string, i: number) => (
+                    {(typeof message.content === 'string' ? message.content : '').split('\n').map((line: string, i: number) => (
                       <React.Fragment key={i}>
                         {line}
-                        {i < message.content.split('\n').length - 1 && <br />}
+                        {i < (typeof message.content === 'string' ? message.content : '').split('\n').length - 1 && <br />}
                       </React.Fragment>
                     ))}
                   </span>
@@ -1314,10 +1475,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                   wordWrap: 'break-word'
                 }}>
                 <div className="relative z-10">
-                  {filterMessageTags(message.content).split('\n').map((line: string, i: number) => (
+                  {filterMessageTags(typeof message.content === 'string' ? message.content : '').split('\n').map((line: string, i: number) => (
                     <React.Fragment key={i}>
                       {line}
-                      {i < message.content.split('\n').length - 1 && <br />}
+                      {i < (typeof message.content === 'string' ? message.content : '').split('\n').length - 1 && <br />}
                     </React.Fragment>
                   ))}
                 </div>
@@ -1387,7 +1548,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                           <input
                             type="checkbox"
                             checked={selectedCompetitors.some((c: any) => c.hubPageId === page.hubPageId)}
-                            onChange={() => handleCompetitorSelect(page)}
+                            onChange={() => {
+                              // 先更新本地选择状态，再发送 ID（与 UI 操作严格绑定）
+                              handleCompetitorSelect(page);
+                              setTimeout(() => sendSelectedHubId(page.hubPageId), 0);
+                            }}
                             className="w-4 h-4 text-blue-600 bg-transparent border-2 border-gray-400 rounded focus:ring-blue-500 focus:ring-2"
                             style={{ accentColor: isHydrated ? themeStyles.pagesGrid?.checkbox?.accentColor : '#357BF7' }}
                           />
@@ -1410,7 +1575,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-2">
-                        {/* Edit button - only show for non-generated pages */}
+                        {/* Edit button - only show for non-generated pages; 点击时通过 WebSocket 发送 hubPageId */}
                         {!page.isPageGenerated && (
                           <button
                             className="text-xs font-medium px-3 py-1 transition-all duration-200 hover:opacity-80 flex items-center gap-1"
@@ -1420,7 +1585,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                               boxShadow: isHydrated ? themeStyles.pagesGrid?.viewButton?.boxShadow : '0px 2px 5px 0px rgba(255, 255, 255, 0.10)',
                               color: isHydrated ? themeStyles.pagesGrid?.viewButton?.text : 'var(--Color-, #FFF)'
                             }}
-                            onClick={() => handleEditPage(page)}
+                            onClick={() => {
+                              // 点击 Edit 也仅在用户此操作时发送
+                              sendSelectedHubId(page.hubPageId);
+                            }}
                           >
                             <span>Edit</span>
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1441,7 +1609,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                               color: isHydrated ? themeStyles.pagesGrid?.viewButton?.text : 'var(--Color-, #FFF)'
                             }}
                             onClick={() => {
-                              const previewUrl = `https://preview.websitelm.site/en/${page.generatedPageId}`;
+                              const idForPreview = page.hubPageId || page.generatedPageId || page.id;
+                              const previewUrl = `https://preview.websitelm.site/en/${idForPreview}`;
                               window.open(previewUrl, '_blank');
                             }}
                           >
@@ -1580,8 +1749,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     }
 
     else {
+    const rawContent = typeof message.content === 'string' ? message.content : '';
     const filteredContent = linkifyDomains(
-      filterMessageTags(message.content).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      filterMessageTags(rawContent).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     );
       const elements = [];
 
@@ -1591,8 +1761,14 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         <div className="flex max-w-[80%] flex-row group">
           <div className="flex-shrink-0" style={{ animation: 'bounceIn 0.6s ease-out forwards' }}>
           </div>
-          <div className="relative">
-            <div className={`text-sm ${isHydrated ? themeStyles.agentMessage?.text : 'text-white'}`} style={{ maxWidth: '800px', wordWrap: 'break-word' }}>
+          <div className="relative w-full">
+            <div
+              className={`px-4 py-3 w-full rounded-xl border ${
+                isHydrated ? themeStyles.systemMessage?.background : 'bg-slate-800/60'
+              } ${isHydrated ? themeStyles.systemMessage?.border : 'border-slate-600/40'}`}
+              style={{ maxWidth: '800px' }}
+            >
+            <div className={`text-sm ${isHydrated ? themeStyles.agentMessage?.text : 'text-white'}`} style={{ wordWrap: 'break-word' }}>
               <div className="relative z-10">
                 {message.isThinking ? (
                   <div className="flex space-x-1">
@@ -1612,13 +1788,13 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                         <div className={`${messageCollapsed[index] ?? true ? 'line-clamp-6' : ''}`}>
                           <span dangerouslySetInnerHTML={{ __html: filteredContent.split('\n').join('<br />') }} />
                         </div>
-                        {(messageCollapsed[index] ?? true) && filteredContent.split('\n').length > 6 && (
+                        {(messageCollapsed[index] ?? true) && filteredContent && filteredContent.split('\n').length > 6 && (
                           <div className={`absolute bottom-0 left-0 right-0 h-16 pointer-events-none ${isHydrated ? `${themeStyles.messageCollapse?.gradientOverlay} ${themeStyles.messageCollapse?.borderRadius}` : 'bg-gradient-to-b from-transparent to-slate-800/90 rounded-lg'
                             }`} />
                         )}
                       </div>
                     </div>
-                    {filteredContent.split('\n').length > 3 && (
+                    {filteredContent && filteredContent.split('\n').length > 3 && (
                       <div
                         className="mt-3 text-xs text-slate-400 text-center cursor-pointer hover:text-slate-300 flex items-center justify-center gap-1"
                         onClick={() => {
@@ -1631,12 +1807,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                         {messageCollapsed[index] ?? true ? (
                           <>
                             <span>Show More</span>
-                            <DownIcon />
+                            <DownOutlined className="text-xs" />
                           </>
                         ) : (
                           <>
                             <span>Show Less</span>
-                            <UpIcon />
+                            <UpOutlined className="text-xs" />
                           </>
                         )}
                       </div>
@@ -1652,6 +1828,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                   </div>
                 )}
               </div>
+            </div>
             </div>
               {/* 去掉小三角形 */}
           </div>
@@ -1695,6 +1872,23 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               : 'w-[100%] max-w-5xl'
             } relative flex flex-col`}>
 
+            {/* 调试面板开关 */}
+            {!isEntryPage && (
+              <div className="absolute right-2 top-2 z-20 flex items-center gap-2">
+                <button
+                  onClick={() => setIsDebugOpen(v => !v)}
+                  className="px-2 py-1 text-xs rounded-md"
+                  style={{
+                    background: '#334155',
+                    color: '#E2E8F0',
+                    border: '1px solid rgba(255,255,255,0.16)'
+                  }}
+                >
+                  {isDebugOpen ? '关闭调试' : '打开调试'}
+                </button>
+              </div>
+            )}
+
             {isMobile && (
               <div className="bg-gradient-to-r from-red-600 to-pink-700 text-white px-4 py-2.5 text-xs font-medium shadow-md rounded-md my-2">
                 <div className="flex items-center gap-2">
@@ -1716,7 +1910,51 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               justifyContent: messages.length === 0 && isEntryPage ? 'center' : 'flex-start',
               marginBottom: !isEntryPage ? '128px' : '0',
             }}>
-              {showSlogan && !isRecoveryMode && messages.length === 0 && (
+              {/* 调试面板 */}
+              {isDebugOpen && !isEntryPage && (
+                <div className="mb-3">
+                  <div
+                    className="rounded-lg p-3 text-xs"
+                    style={{
+                      border: '1px solid rgba(255, 255, 255, 0.16)',
+                      background: '#0B1421',
+                      color: '#D1D5DB',
+                      maxHeight: '240px',
+                      overflowY: 'auto'
+                    }}
+                  >
+                    <div className="mb-2 font-medium" style={{color:'#93C5FD'}}>ID 调试（最近 200 条，仅勾选/生成相关）</div>
+                    {idDebugLogs.length === 0 && (
+                      <div style={{color:'#94A3B8'}}>暂无调试信息</div>
+                    )}
+                    {idDebugLogs.map((log) => (
+                      <div key={log.id} className="mb-2">
+                        <div className="flex items-center gap-2">
+                          <span style={{color: log.level === 'send' ? '#34D399' : log.level === 'recv' ? '#60A5FA' : log.level === 'error' ? '#F87171' : '#E5E7EB'}}>
+                            [{log.level.toUpperCase()}]
+                          </span>
+                          <span style={{color:'#94A3B8'}}>{log.time}</span>
+                          {log.hubId && (
+                            <span className="px-1.5 py-0.5 rounded" style={{background:'#1E293B', color:'#93C5FD'}}>
+                              hubId: {log.hubId}
+                            </span>
+                          )}
+                          {log.messageType && (
+                            <span className="px-1.5 py-0.5 rounded" style={{background:'#1F2937', color:'#E5E7EB'}}>
+                              type: {log.messageType}
+                            </span>
+                          )}
+                        </div>
+                        <pre className="whitespace-pre-wrap break-words" style={{color:'#CBD5E1'}}>
+{typeof log.raw === 'string' ? log.raw : JSON.stringify(log.raw, null, 2)}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {showSlogan && messages.length === 0 && (
                 <div style={{
                   margin: isEntryPage ? 'auto 0' : '0 auto',
                   padding: '2rem',
@@ -1881,16 +2119,16 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                       <div className="relative">
                         <div className="w-full max-w-xxl mx-auto">
                           {!isEntryPage && (
-                            <>
-                              <CompetitorSearchStatusBar
-                                competitorSearchStatus={competitorSearchStatus}
-                                sitemapStatus={sitemapStatus}
-                                isExpanded={competitorSearchStatusBarExpanded}
-                                setIsExpanded={setCompetitorSearchStatusBarExpanded}
-                                themeStyles={themeStyles}
-                                isHydrated={isHydrated}
-                              />
-                            </>
+                            <TaskStatusBar
+                              currentStep={currentStep}
+                              taskSteps={taskSteps}
+                              browserTabs={browserTabs}
+                              taskTimeEstimates={taskTimeEstimates}
+                              isExpanded={isStatusBarExpanded}
+                              setIsExpanded={setIsStatusBarExpanded}
+                              themeStyles={themeStyles}
+                              isHydrated={isHydrated}
+                            />
                           )}
                           <div className="rounded-2xl shadow-lg px-5 py-4 flex flex-col gap-2"
                             style={{
@@ -2032,6 +2270,22 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                 <div className="flex-1">
                   {rightPanelTab === 'browser' && (
                     <div className="space-y-2">
+                      {typeof latestMarkdown === 'string' && latestMarkdown.trim().length > 0 && (
+                        <div className="px-3 pt-3">
+                          <div
+                            className="rounded-lg p-3 text-xs whitespace-pre-wrap break-words"
+                            style={{
+                              border: '1px solid rgba(255, 255, 255, 0.16)',
+                              background: '#0B1421',
+                              color: '#D1D5DB',
+                              maxHeight: '180px',
+                              overflowY: 'auto'
+                            }}
+                          >
+                            {latestMarkdown}
+                          </div>
+                        </div>
+                      )}
                       {browserTabs.length === 0 ? (
                         <div className="flex-1 overflow-y-auto overflow-y-hidden p-3 h-[calc(100vh-400px)]">
                           <div className="flex items-center justify-center h-full">
@@ -2130,6 +2384,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             <div style={{ color: '#64748b', fontSize: 14 }}>
               Please try again later.
             </div>
+            </div>
           </div>
         </Modal>
       )} */}
@@ -2161,7 +2416,23 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         </Modal>
       )} */}
 
-
+      {/* WebSocket连接组件 - 只在客户端渲染 */}
+      {typeof window !== 'undefined' && currentConversationId && (
+        <WebSocketConnection 
+          ref={webSocketRef}
+          conversationId={currentConversationId}
+          domain={currentDomain || undefined}
+          onMessage={handleWebSocketMessage}
+          onError={handleWebSocketError}
+          onClose={handleWebSocketClose}
+          onOpen={handleWebSocketOpen}
+          autoConnect={true}
+          onSendMessage={(message) => {
+            console.log('🔍 消息已发送:', message);
+          }}
+          onThemeSwitch={switchTheme}
+        />
+      )}
     </>
   );
 };

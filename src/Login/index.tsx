@@ -286,6 +286,11 @@ export default function AuthManager(props: AuthManagerProps) {
         setIsLoggedIn(true);
         setUserEmail(storedEmail);
         setAppUserEmail(storedEmail);
+        
+        // 登录成功后刷新页面
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000); // 延迟1秒刷新，让用户看到成功消息
       }
     };
     window.addEventListener('alternativelyLoginSuccess', handleLoginSuccess);
