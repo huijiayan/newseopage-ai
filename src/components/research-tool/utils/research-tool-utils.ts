@@ -405,6 +405,22 @@ export const injectResearchToolStyles = (): void => {
       }
     }
 
+    /* Slide up appear for panels */
+    .animate-slideUp {
+      opacity: 0;
+      animation: slideUp 0.35s ease-out forwards;
+    }
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
     .research-tool-input::placeholder {
       color: #9ca3af !important;
       opacity: 0.8 !important;

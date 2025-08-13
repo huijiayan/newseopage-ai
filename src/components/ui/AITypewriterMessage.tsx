@@ -44,14 +44,28 @@ export const AITypewriterMessage: React.FC<AITypewriterMessageProps> = ({
 
     // 如果是对象，尝试提取文本内容
     if (typeof msg.content === 'object') {
+      // 顶层即为 AIMessage 结构的情况
+      if ((msg.content as any)._type === 'AIMessage' && typeof (msg.content as any).content === 'string') {
+        return (msg.content as any).content;
+      }
+
       // 处理AI消息结构
       if (msg.content.messages && Array.isArray(msg.content.messages)) {
-        const aiMessages = msg.content.messages.filter((m: any) => 
-          m.type === 'AIMessage' && m.content && typeof m.content === 'string'
-        );
+        const aiMessages = msg.content.messages.filter((m: any) => {
+          const t = m.type || m._type;
+          return t === 'AIMessage' && m.content && typeof m.content === 'string';
+        });
         
         if (aiMessages.length > 0) {
           return aiMessages.map((m: any) => m.content).join('\n\n');
+        }
+
+        // 若没有显式标记为 AIMessage，也尽量拼接其中的 content 字段
+        const anyContents = msg.content.messages
+          .map((m: any) => (typeof m?.content === 'string' ? m.content : ''))
+          .filter((s: string) => !!s);
+        if (anyContents.length > 0) {
+          return anyContents.join('\n\n');
         }
       }
 
@@ -79,7 +93,7 @@ export const AITypewriterMessage: React.FC<AITypewriterMessageProps> = ({
         if (obj && typeof obj === 'object') {
           const textParts: string[] = [];
           for (const [key, value] of Object.entries(obj)) {
-            if (key === 'content' || key === 'text' || key === 'message') {
+            if (key === 'content' || key === 'text' || key === 'message' || key === 'messages') {
               const extracted = extractText(value);
               if (extracted) textParts.push(extracted);
             }

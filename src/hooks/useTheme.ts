@@ -23,10 +23,18 @@ export function useTheme() {
       if (isDarkMode) {
         document.documentElement.classList.add('dark');
         setLocalStorageItem('theme', 'dark');
+        try { localStorage.setItem('seopage-theme', 'dark'); } catch {}
       } else {
         document.documentElement.classList.remove('dark');
         setLocalStorageItem('theme', 'light');
+        try { localStorage.setItem('seopage-theme', 'light'); } catch {}
       }
+
+      // 通知依赖 research-tool 主题系统的组件（监听 themeChanged 事件）
+      try {
+        const theme = isDarkMode ? 'dark' : 'light';
+        window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme } }));
+      } catch {}
     }
   }, [isDarkMode]);
 

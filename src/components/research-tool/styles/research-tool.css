@@ -9,7 +9,7 @@
 .research-tool-container {
   background: linear-gradient(180deg, #121826 0%, #030810 100%);
   min-height: 100vh;
-  color: white;
+  color: #cbd5e1;
   font-family: 'Inter', sans-serif;
 }
 
@@ -315,7 +315,7 @@
 /* 暗色主题 (默认) */
 .theme-dark .research-tool-container {
   background: linear-gradient(180deg, #121826 0%, #030810 100%);
-  color: white;
+  color: #cbd5e1;
 }
 
 .theme-dark .task-status-bar {

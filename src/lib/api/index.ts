@@ -113,7 +113,7 @@ const getEnvironmentConfig = () => {
     // 生产环境域名 - 暂时使用测试环境API
     if (hostname.includes('websitelm.com') || hostname.includes('seopage.ai') || hostname.includes('bestpage.ai')) {
       return {
-        apiUrl: 'https://api.zhuyuejoey.com/v1',
+        apiUrl: 'https://api.websitelm.com/v1',
         chatApiUrl: 'https://agents.zhuyuejoey.com',
         chatWsUrl: 'wss://agents.zhuyuejoey.com'
       };

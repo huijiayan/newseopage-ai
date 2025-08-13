@@ -41,11 +41,10 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
   onSendMessage,
   enableAutoReconnect = true,
   maxReconnectAttempts = 5,
-  reconnectDelay = 2000,
-  onThemeSwitch
+  reconnectDelay = 2000
 }, ref) => {
   // 添加主题配置
-  const { currentTheme, getThemeConfig, isHydrated } = useTheme();
+  const { getThemeConfig, isHydrated } = useTheme();
   
   // 获取research-tool主题配置，提供fallback避免hydration不匹配
   const themeStyles = isHydrated ? getThemeConfig('researchTool') : {
@@ -482,28 +481,6 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
           }`}>
             WebSocket连接状态
           </div>
-          
-          {/* 主题切换按钮 */}
-          <button
-            onClick={() => {
-              const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-              if (onThemeSwitch) {
-                onThemeSwitch(newTheme);
-              } else {
-                // 如果没有传入回调，使用默认的切换方式
-                localStorage.setItem('research-tool-theme', newTheme);
-                window.location.reload();
-              }
-            }}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-200 ${
-              currentTheme === 'dark' 
-                ? 'bg-blue-600 hover:bg-blue-500 text-white' 
-                : 'bg-gray-600 hover:bg-gray-500 text-white'
-            }`}
-            title={`当前主题: ${currentTheme === 'dark' ? '深色' : '浅色'}，点击切换到${currentTheme === 'dark' ? '浅色' : '深色'}`}
-          >
-            {currentTheme === 'dark' ? '🌙' : '☀️'} {currentTheme === 'dark' ? '浅色' : '深色'}
-          </button>
         </div>
         
         <div className={`${

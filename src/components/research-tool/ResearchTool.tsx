@@ -10,6 +10,7 @@ import type { ResearchToolProps } from '@/types/research-tool';
 import { useResearchTool } from './hooks/useResearchTool';
 import { useTheme } from './hooks/useTheme';
 import { TaskStatusBar } from './components/TaskStatusBar';
+import { AgentProcessingPanel } from './components/AgentProcessingPanel';
 import {
   filterMessageTags,
   linkifyDomains,
@@ -66,8 +67,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     console.info = (...args: any[]) => {
       if (allow(args)) original.info(...args);
     };
-    console.warn = (..._args: any[]) => {};
-    console.error = (..._args: any[]) => {};
+    console.warn = (..._args: any[]) => { };
+    console.error = (..._args: any[]) => { };
     return () => {
       console.log = original.log;
       console.info = original.info;
@@ -90,6 +91,20 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   type DebugLevel = 'send' | 'recv' | 'info' | 'error';
   interface IdDebugEntry { id: string; time: string; level: DebugLevel; hubId?: string; messageType?: string; raw: any }
   const [idDebugLogs, setIdDebugLogs] = useState<IdDebugEntry[]>([]);
+  // Agent Processing steps status
+  const AGENT_STEPS = [
+    { key: 'competitor_retriever', label: 'competitor_retriever' },
+    { key: 'competitor_validator', label: 'competitor_validator' },
+    { key: 'generate_sitemap_planning', label: 'generate_sitemap_planning' },
+  ] as const;
+  type AgentKey = typeof AGENT_STEPS[number]['key'];
+  const [agentStepStatus, setAgentStepStatus] = useState<Record<AgentKey, 'pending' | 'processing' | 'success'>>({
+    competitor_retriever: 'pending',
+    competitor_validator: 'pending',
+    generate_sitemap_planning: 'pending',
+  });
+  const [showAgentPanel, setShowAgentPanel] = useState(false);
+  const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(true);
   const recentHubIdsRef = useRef<string[]>([]);
   const pushWatchedHubId = useCallback((hubId: string) => {
     if (!hubId) return;
@@ -122,7 +137,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     };
 
     window.addEventListener('storage', handleStorageChange);
-    
+
     return () => {
       window.removeEventListener('storage', handleStorageChange);
     };
@@ -330,7 +345,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         logIdDebug('send', msg, hubId, 'message');
         webSocketRef.current.sendMessage(msg);
       }
-    } catch {}
+    } catch { }
   }, []);
 
   const handleWebSocketMessage = (data: any) => {
@@ -340,25 +355,20 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     if (typeof payload === 'string') {
       try { payload = JSON.parse(payload); } catch { /* ignore */ }
     }
-    
+
     const isToolCall = !!(payload && (payload.event === 'tool_call' || payload.type === 'tool_call'));
     const isToolResult = !!(payload && (payload.event === 'tool_result' || payload.type === 'tool_result'));
 
     try {
       if (isToolCall) {
-        const arr = Array.isArray(payload?.payload?.args?.state?.messages)
-          ? payload.payload.args.state.messages
-          : [];
+        // 支持两种结构：state.content 与 state.messages
+        const state = payload?.payload?.args?.state || {};
+        const arrContent = Array.isArray(state?.content) ? state.content : [];
+        const arrMessages = Array.isArray(state?.messages) ? state.messages : [];
+        const arr = [...arrContent, ...arrMessages];
 
         for (const item of arr) {
           if (item?.type === 'user_message') continue; // 跳过用户输入
-
-          // 捕获 markdown 消息
-          if (item?.type === 'markdown' || typeof item?.markdown === 'string') {
-            const md = typeof item?.markdown === 'string' ? item.markdown : (typeof item?.content === 'string' ? item.content : '');
-            if (md) setLatestMarkdown(md);
-            continue;
-          }
 
           if (typeof item?.content === 'string' && item.content.trim().length > 0) {
             if (!processedAiTextRef.current.has(item.content)) {
@@ -367,15 +377,13 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             }
             continue;
           }
-
-          // 按需忽略 website 详情对象
-
-          if (Array.isArray(item?.hub_entries)) {
-            const entries = item.hub_entries;
-            const count = entries.length;
-            // 在卡片前插入一条提示气泡
-            aiQueueRef.current.push({ kind: 'text', content: `${count} candidate pages have been found. Please check the boxes in the cards below and click "Generate".` });
-            aiQueueRef.current.push({ kind: 'hub_entries', pageType: item.page_type, entries });
+          // 兼容消息对象形态：{ _type: 'AIMessage', content: '...' }
+          const msgType = item?.type || item?._type;
+          if (msgType === 'AIMessage' && typeof item?.content === 'string' && item.content.trim().length > 0) {
+            if (!processedAiTextRef.current.has(item.content)) {
+              processedAiTextRef.current.add(item.content);
+              aiQueueRef.current.push({ kind: 'text', content: item.content });
+            }
             continue;
           }
         }
@@ -384,6 +392,20 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       if (isToolResult) {
         // 解析 tool_result 的 hub_entries（常见在 payload.output.hub_entries）
         const output = payload?.payload?.output || payload?.output || {};
+        // 更新 AgentProcessing 面板
+        try {
+          const toolName: string = (payload?.content?.tool || payload?.tool || '').trim();
+          if (toolName) {
+            setShowAgentPanel(true);
+            setAgentStepStatus(prev => {
+              const next = { ...prev } as any;
+              if (toolName in next) {
+                next[toolName as AgentKey] = payload?.content?.success === true || payload?.success === true ? 'success' : 'processing';
+              }
+              return next;
+            });
+          }
+        } catch {}
         const hubEntries = Array.isArray(output?.hub_entries) ? output.hub_entries : [];
         const pageType = output?.page_type || output?.pageType;
         // 捕获 markdown 文本
@@ -408,11 +430,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           logIdDebug('recv', payload, matchedHub, 'tool_result');
         }
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // 顺序处理队列
     processAIQueue();
-    
+
     // 处理其他类型的消息
     if (payload.type) {
       // 根据消息类型添加到相应的消息列表
@@ -473,7 +495,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const handleWebSocketClose = (event: CloseEvent) => {
     setWsConnected(false);
     setWsConnectionState('CLOSED');
-    
+
     if (event.code !== 1000) {
     }
   };
@@ -490,14 +512,14 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       // 1. 自动检测：URL中的conversationId参数
       const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
       const urlConversationId = urlParams.get('conversationId');
-      
+
       // 2. 自动设置：恢复模式和对话ID
       let targetConversationId = conversationId || urlConversationId;
       let shouldRecover = false;
-      
+
       if (targetConversationId) {
 
-        
+
         // 设置conversationId - 避免无限循环
         if (targetConversationId !== currentConversationId) {
           setCurrentConversationId(targetConversationId);
@@ -550,7 +572,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             (typeof rec?.payload?.timestamp === 'string' && rec.payload.timestamp) ||
             null;
           if (ts) lastTs = ts;
-        } catch (e) {}
+        } catch (e) { }
       }
 
       // 记录最后一条事件时间戳用于断点续传
@@ -559,8 +581,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         if (lastTs) {
           localStorage.setItem(key, String(lastTs));
         }
-      } catch {}
-      
+      } catch { }
+
     } catch (error) {
     }
   };
@@ -573,14 +595,14 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   // 从URL中提取域名
   const extractDomainFromUrl = (url: string): string => {
     if (!url) return '';
-    
+
     try {
       // 确保URL有协议
       let fullUrl = url;
       if (!url.startsWith('http://') && !url.startsWith('https://')) {
         fullUrl = 'https://' + url;
       }
-      
+
       const urlObj = new URL(fullUrl);
       return urlObj.hostname.toLowerCase();
     } catch (error) { return url.toLowerCase(); }
@@ -616,7 +638,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             if (ensureWebsiteId) setCurrentWebsiteId(ensureWebsiteId);
           }
         }
-      } catch {}
+      } catch { }
 
       const generateResponse = await apiClient.generateAlternative(
         ensureConversationId,
@@ -676,7 +698,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       const processedDomain = formattedInput;
       localStorage.setItem('currentDomain', processedDomain);
       localStorage.setItem('currentProductUrl', formattedInput);
-      
+
       // 只有当域名真正变化时才更新状态
       if (processedDomain !== currentDomain) {
         setCurrentDomain(processedDomain);
@@ -692,8 +714,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
         // 检查响应格式 - 可能返回WebSocket对象或包含conversationId的对象
         if (chatResponse && 'websocket' in chatResponse) {
-  
-          
+
+
           // 检查API响应中是否包含conversationId
           if (chatResponse.conversationId) {
             tempConversationId = chatResponse.conversationId;
@@ -717,11 +739,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             websocket.onmessage = (event) => {
               try {
                 const data = JSON.parse(event.data);
-        
-                
+
+
                 if (data.conversationId) {
                   setCurrentConversationId(data.conversationId);
-                  
+
                   // 实时更新URL
                   const currentPath = window.location.pathname;
                   let targetPath = '/alternative';
@@ -734,7 +756,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                   }
                   router.replace(`${targetPath}?conversationId=${data.conversationId}`);
                 }
-              } catch (error) {}
+              } catch (error) { }
             };
           }
         } else {
@@ -757,7 +779,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             conversationId: currentConversationId,
             timestamp: new Date().toISOString()
           };
-          
+
           // 通过WebSocket发送消息
           const success = webSocketRef.current.sendMessage(message);
           if (success) {
@@ -766,7 +788,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         } else {
         }
       } catch (error) {
-        
+
       }
     } catch (error) {
       // 静默处理错误
@@ -778,370 +800,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     }
   };
 
-  // 对应老代码第1255-2155行的renderChatMessage函数
+  //处理消息
   const renderChatMessage = (message: any, index: number) => {
     // 处理域名信息消息
-    if (message.type === 'domain_info') {
-      return (
-        <div
-          key={message.id || `domain-info-${index}`}
-          className="flex justify-start mb-4"
-          style={{ animation: 'fadeIn 0.5s ease-out forwards' }}
-        >
-          <div className="w-full flex flex-col items-start">
-            <div className="relative w-full">
-              <div
-                className={`px-4 py-3 w-full hover:shadow-slate-500/20 transition-all duration-300 transform hover:-translate-y-0.5 rounded-xl ${isHydrated ? themeStyles.systemMessage?.background : 'bg-blue-500/10'} ${isHydrated ? themeStyles.systemMessage?.border : 'border-blue-500/20'} border`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
-                    <span className="text-blue-500 text-lg">🌐</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className={`${isHydrated ? themeStyles.systemMessage?.text : 'text-blue-100'} font-medium text-sm mb-1`}>
-                      域名信息
-                    </div>
-                    <div className={`${isHydrated ? themeStyles.systemMessage?.text : 'text-blue-200'} text-sm`}>
-                      {message.content}
-                    </div>
-                    {message.domain && (
-                      <div className="mt-2 text-xs text-blue-300/70">
-                        域名: {message.domain}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="text-[10px] text-slate-400 mt-2 ml-11">
-                  {new Date(message.timestamp || Date.now()).toLocaleString()}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (message.type === 'thinking-log-group') {
-      const isExpanded = thinkingLogExpanded[message.id] !== false;
-
-      const getDisplayTitle = (logType: string, step: string, itemsLength: number) => {
-        let title = '';
-        if (logType === 'API') {
-          if (step === 'FIND_COMPETITORS_SEMRUSH_API') {
-            title = 'Finding competitors for the website URL';
-          } else {
-            title = `API Result - ${step || 'Processing'}`;
-          }
-        } else if (logType === 'Agent') {
-          if (step === 'FIND_WEBSITE_SITEMAP_AGENT') {
-            title = 'Finding website sitemap...';
-          } else {
-            title = 'Finding competitors...';
-          }
-        } else if (logType === 'CompetitorsAgent') {
-          title = 'Finding competitors...';
-        } else if (logType === 'SitemapAgent') {
-          title = 'Finding website sitemap...';
-        } else if (logType === 'Dify') {
-          title = `Competitor Analysis - ${itemsLength || 0} steps`;
-        } else if (logType === 'Html') {
-          title = 'Code Generation - Writing HTML...';
-        } else if (logType === 'Color') {
-          title = 'Color Analysis - Page Style Detected';
-        } else if (logType === 'Crawler_Images') {
-          title = 'Image Crawling - Found Images';
-        } else if (logType === 'Crawler_Headers') {
-          title = 'Header Crawling - Found Header Links';
-        } else if (logType === 'Crawler_Footers') {
-          title = 'Footer Crawling - Found Footer Links';
-        } else if (logType === 'Codes') {
-          title = 'Page Generated - Coding Finished';
-        } else {
-          title = `${logType} Log - Processing`;
-        }
-
-        const words = title.split(' ');
-        if (words.length > 10) {
-          return words.slice(0, 10).join(' ') + '...';
-        }
-        return title;
-      };
-
-      return (
-        <div
-          key={message.id || `thinking-log-group-${index}`}
-          className="flex justify-start mb-4"
-          style={{ animation: 'fadeIn 0.5s ease-out forwards' }}
-        >
-          <div className="w-full flex flex-col items-start">
-            <div className="relative w-full">
-              <div
-                className={`px-4 py-3 w-full hover:shadow-slate-500/20 transition-all duration-300 transform hover:-translate-y-0.5 rounded-xl ${isHydrated ? themeStyles.agentProcessing?.background : 'bg-white/[0.04]'} ${isHydrated ? themeStyles.agentProcessing?.border : 'border-white/[0.05]'} border`}
-              >
-                {/* 标题栏 */}
-                <div className="flex items-center justify-between gap-3 mb-2">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    {/* 展开/折叠箭头 */}
-                    <button
-                      onClick={() => setThinkingLogExpanded(prev => ({
-                        ...prev,
-                        [message.id]: !prev[message.id]
-                      }))}
-                      className="flex-shrink-0 transition-transform duration-200"
-                    >
-                      <svg
-                        className={`w-4 h-4 transform transition-transform duration-200 ${isExpanded ? 'rotate-90' : 'rotate-0'}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        style={{ color: '#357BF7' }}
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-
-                    {/* 标题文字 */}
-                    <span className={`${isHydrated ? themeStyles.agentProcessing?.titleText : 'text-white'} font-medium text-sm`}>
-                      Agent Processing
-                    </span>
-                  </div>
-                </div>
-
-                {/* 展开的内容 */}
-                {isExpanded && (
-                  <div className="space-y-2 border-t border-gray-600/30 pt-3">
-                    {message.items.map((item: any, itemIndex: number) => {
-                      // 对于Dify组，需要特殊处理显示标题
-                      let itemTitle;
-                      if (item.isGroup && item.logType === 'Dify') {
-                        const itemCount = item.items ? item.items.length : 1;
-                        itemTitle = `Competitor Analysis - ${itemCount} ${itemCount === 1 ? 'step' : 'steps'}`;
-                      } else {
-                        // 对于其他类型，使用标准的getDisplayTitle函数
-                        itemTitle = getDisplayTitle(item.logType, item.step, 1);
-                      }
-
-                      return (
-                        <div
-                          key={item.id || `item-${itemIndex}`}
-                          className="flex items-center justify-between py-2 transition-colors duration-150"
-                        >
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            {/* SVG圆圈图标 */}
-                            <div className="flex-shrink-0">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="14" viewBox="0 0 15 14" fill="none">
-                                <circle cx="7.5" cy="7" r="6.5" stroke="#8C8C8C" />
-                              </svg>
-                            </div>
-
-                            {/* 项目标题 */}
-                            <span
-                              className="text-xs truncate"
-                              style={{ color: '#8C8C8C' }}
-                            >
-                              {itemTitle}
-                            </span>
-                          </div>
-
-                          {/* View按钮 */}
-                          <button
-                            onClick={() => {
-                              if (!isBrowserSidebarOpen) {
-                                setIsBrowserSidebarOpen(true);
-                              }
-
-                              setApiDetailModal({
-                                visible: true,
-                                data: item
-                              })
-                            }}
-                            className="px-2 py-1 transition-colors duration-150 flex-shrink-0 text-xs font-medium flex items-center gap-1"
-                            style={{
-                              border: 'none',
-                              background: 'transparent',
-                              color: '#8C8C8C',
-                            }}
-                            onMouseEnter={(e) => {
-                              const target = e.target as HTMLElement;
-                              target.style.color = '#357BF7';
-                              // 也需要更新箭头的颜色
-                              const arrow = target.querySelector('span') as HTMLElement;
-                              if (arrow) arrow.style.color = '#357BF7';
-                            }}
-                            onMouseLeave={(e) => {
-                              const target = e.target as HTMLElement;
-                              target.style.color = '#8C8C8C';
-                              // 恢复箭头的颜色
-                              const arrow = target.querySelector('span') as HTMLElement;
-                              if (arrow) arrow.style.color = '#8C8C8C';
-                            }}
-                          >
-                            View
-                            <span
-                              className="transition-colors duration-150"
-                              style={{ color: '#8C8C8C' }}
-                            >
-                              →
-                            </span>
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1 ml-2">
-              {new Date(message.timestamp || Date.now()).toLocaleString()}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (message.type === 'thinking-log') {
-      const getDisplayTitle = (logType: string, step: string, itemsLength: number) => {
-        let title = '';
-        if (logType === 'API') {
-          // 为 FIND_COMPETITORS_SEMRUSH_API 步骤添加特殊处理
-          if (step === 'FIND_COMPETITORS_SEMRUSH_API') {
-            title = 'Agent Processing | Finding competitors for the website URL';
-          } else {
-            title = `API Result - ${step || 'Processing'}`;
-          }
-        } else if (logType === 'Agent') {
-          if (step === 'FIND_WEBSITE_SITEMAP_AGENT') {
-            title = 'Agent Processing | Finding website sitemap...';
-          } else {
-            title = 'Agent Processing | Finding competitors...';
-          }
-        } else if (logType === 'CompetitorsAgent') {
-          title = 'Agent Processing | Finding competitors...';
-        } else if (logType === 'SitemapAgent') {
-          title = 'Agent Processing | Finding website sitemap...';
-        } else if (logType === 'Dify') {
-          title = `Agent Processing | Competitor Analysis - ${itemsLength || 0} steps`;
-        } else if (logType === 'Html') {
-          title = 'Agent Processing | Code Generation - Writing HTML...';
-        } else if (logType === 'Color') {
-          title = 'Agent Processing | Color Analysis - Page Style Detected';
-        } else if (logType === 'Crawler_Images') {
-          title = 'Agent Processing | Image Crawling - Found Images';
-        } else if (logType === 'Crawler_Headers') {
-          title = 'Agent Processing | Header Crawling - Found Header Links';
-        } else if (logType === 'Crawler_Footers') {
-          title = 'Agent Processing | Footer Crawling - Found Footer Links';
-        } else if (logType === 'Codes') {
-          title = 'Agent Processing | Page Generated - Coding Finished';
-        }
-        else {
-          title = `Agent Processing | ${logType} Log - Processing`;
-        }
-
-        const words = title.split(' ');
-        if (words.length > 10) {
-          return words.slice(0, 10).join(' ') + '...';
-        }
-        return title;
-      };
-
-      const displayTitle = getDisplayTitle(message.logType, message.step, message.items?.length);
-
-      // 分割标题为两部分：Agent Processing | 和后面的内容
-      const titleParts = displayTitle.split(' | ');
-      const agentProcessingText = titleParts[0] + ' |'; // "Agent Processing |"
-      const followingText = titleParts[1] || ''; // 后面的内容
-
-      return (
-        <div
-          key={message.id || `thinking-log-${message.logType}-${index}`}
-          className="flex justify-start mb-4"
-          style={{ animation: 'fadeIn 0.5s ease-out forwards' }}
-        >
-          <div className="w-full flex flex-col items-start">
-            <div className="relative w-full">
-              <div
-                className={`px-3 py-2 w-full hover:shadow-slate-500/20 transition-all duration-300 transform hover:-translate-y-0.5 rounded-xl ${isHydrated ? themeStyles.agentProcessing?.background : 'bg-white/[0.04]'} ${isHydrated ? themeStyles.agentProcessing?.border : 'border-white/[0.05]'} border`}
-              >
-                <div className="flex items-center justify-between gap-3 mb-1">
-                  <div className="flex items-center gap-1 flex-1 min-w-0">
-                    {/* 去掉所有SVG图标，直接显示文字 */}
-                    <span className="text-white font-medium text-xs">
-                      {agentProcessingText}
-                    </span>
-                    {followingText && (
-                      <span className="text-gray-400 text-xs">
-                        {' ' + followingText}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* View按钮在右侧 */}
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {!(message.logType === 'API' && message.step === 'FIND_COMPETITORS_SEMRUSH_API') && (
-                      <button
-                        onClick={() => setApiDetailModal({
-                          visible: true,
-                          data: message
-                        })}
-                        className="px-2 py-1 transition-colors duration-150 flex-shrink-0 text-xs font-medium"
-                        style={{
-                          borderRadius: '8px',
-                          background: 'rgba(255, 255, 255, 0.10)',
-                          border: 'none',
-                          color: 'rgba(255, 255, 255, 0.50)',
-                        }}
-                        onMouseEnter={(e) => {
-                          const target = e.target as HTMLElement;
-                          target.style.background = 'rgba(255, 255, 255, 0.15)';
-                          target.style.color = 'rgba(255, 255, 255, 0.70)';
-                        }}
-                        onMouseLeave={(e) => {
-                          const target = e.target as HTMLElement;
-                          target.style.background = 'rgba(255, 255, 255, 0.10)';
-                          target.style.color = 'rgba(255, 255, 255, 0.50)';
-                        }}
-                      >
-                        View
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-              {/* 去掉小三角形 */}
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1 ml-2">
-              {new Date(message.timestamp || Date.now()).toLocaleString()}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (message.type === 'important-tip') {
-      return (
-        <div
-          key={`important-tip-${message.id || index}`}
-          className="flex justify-start mb-4"
-        >
-          <div className="max-w-[80%]">
-            <div className="bg-slate-700 border-l-4 border-blue-500 p-3 rounded-r-md shadow-sm">
-              <div className="text-white text-sm font-medium">
-                {(typeof message.content === 'string' ? message.content : '').split('\n').map((line: string, i: number) => (
-                  <React.Fragment key={i}>
-                    {line}
-                    {i < (typeof message.content === 'string' ? message.content : '').split('\n').length - 1 && <br />}
-                  </React.Fragment>
-                ))}
-              </div>
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1 ml-1">
-              {new Date(message.timestamp).toLocaleString()}
-            </div>
-          </div>
-        </div>
-      );
-    }
 
     if (message.type === 'codes-completion') {
       return (
@@ -1386,7 +1047,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                 </div>
               </div>
             </div>
-            <div className="text-[10px] text-slate-400 mt-1 ml-2">
+            <div className={`text-[10px] mt-1 ml-2 ${isHydrated ? (currentTheme === 'dark' ? 'text-slate-400' : 'text-gray-500') : 'text-slate-400'}`}>
               {new Date(message.timestamp).toLocaleString()}
             </div>
           </div>
@@ -1500,7 +1161,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                           </button>
                         )}
 
-                        {/* View button - only show for generated pages */}
+                        {/* 查看按钮，在生成的页面展示 */}
                         {page.isPageGenerated && (
                           <button
                             className="text-xs font-medium px-3 py-1 transition-all duration-200 hover:opacity-80 flex items-center gap-1"
@@ -1645,101 +1306,102 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                 </div>
               ))}
             </div>
+            {/* Timestamp for pages-grid block */}
+            <div className="text-[10px] text-slate-400 mt-2 ml-2">
+              {new Date(message.timestamp || Date.now()).toLocaleString()}
+            </div>
           </div>
         </div>
       );
     }
 
     else {
-    const rawContent = typeof message.content === 'string' ? message.content : '';
-    const filteredContent = linkifyDomains(
-      filterMessageTags(rawContent).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    );
+      // 当为思考态时不渲染占位气泡
+      if (message.isThinking) {
+        return null;
+      }
+      const rawContent = typeof message.content === 'string' ? message.content : '';
+      const filteredContent = linkifyDomains(
+        filterMessageTags(rawContent).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      );
       const elements = [];
 
       // 1. Agent消息本身
       elements.push(
-      <div key={index} className="flex flex-col justify-start mb-6" style={{ animation: 'fadeIn 0.5s ease-out forwards' }}>
-        <div className="flex max-w-[80%] flex-row group">
-          <div className="flex-shrink-0" style={{ animation: 'bounceIn 0.6s ease-out forwards' }}>
-          </div>
-          <div className="relative w-full">
-            <div
-              className={`px-4 py-3 w-full rounded-xl border ${
-                isHydrated ? themeStyles.systemMessage?.background : 'bg-slate-800/60'
-              } ${isHydrated ? themeStyles.systemMessage?.border : 'border-slate-600/40'}`}
-              style={{ maxWidth: '800px' }}
-            >
-            <div className={`text-sm ${isHydrated ? themeStyles.agentMessage?.text : 'text-white'}`} style={{ wordWrap: 'break-word' }}>
-              <div className="relative z-10">
-                {message.isThinking ? (
-                  <div className="flex space-x-1">
-                    <div className={`w-2 h-2 ${isHydrated ? themeStyles.agentMessage?.loadingDots : 'bg-gray-300'} rounded-full animate-bounce`}></div>
-                    <div className={`w-2 h-2 ${isHydrated ? themeStyles.agentMessage?.loadingDots : 'bg-gray-300'} rounded-full animate-bounce`} style={{ animationDelay: '0.2s' }}></div>
-                    <div className={`w-2 h-2 ${isHydrated ? themeStyles.agentMessage?.loadingDots : 'bg-gray-300'} rounded-full animate-bounce`} style={{ animationDelay: '0.4s' }}></div>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="flex items-start gap-2">
-                      <button
-                        onClick={() => setMessageCollapsed(prev => ({ ...prev, [index]: !prev[index] }))}
-                        className="text-slate-400 hover:text-slate-300 transition-colors flex-shrink-0 mt-1"
-                      >
-                      </button>
-                      <div className="relative">
-                        <div className={`${messageCollapsed[index] ?? true ? 'line-clamp-6' : ''}`}>
-                          <span dangerouslySetInnerHTML={{ __html: filteredContent.split('\n').join('<br />') }} />
+        <div key={index} className="flex flex-col justify-start mb-6" style={{ animation: 'fadeIn 0.5s ease-out forwards' }}>
+          <div className="flex max-w-[80%] flex-row group">
+            <div className="flex-shrink-0" style={{ animation: 'bounceIn 0.6s ease-out forwards' }}>
+            </div>
+            <div className="relative w-full">
+              <div
+                className={`px-4 py-3 w-full rounded-xl border ${isHydrated ? themeStyles.systemMessage?.background : 'bg-slate-800/60'
+                  } ${isHydrated ? themeStyles.systemMessage?.border : 'border-slate-600/40'}`}
+                style={{ maxWidth: '800px' }}
+              >
+                <div className={`text-sm ${isHydrated ? themeStyles.agentMessage?.text : 'text-white'}`} style={{ wordWrap: 'break-word' }}>
+                  <div className="relative z-10">
+                    {
+                      <div>
+                        <div className="flex items-start gap-2">
+                          <button
+                            onClick={() => setMessageCollapsed(prev => ({ ...prev, [index]: !prev[index] }))}
+                            className="text-slate-400 hover:text-slate-300 transition-colors flex-shrink-0 mt-1"
+                          >
+                          </button>
+                          <div className="relative">
+                            <div className={`${messageCollapsed[index] ?? true ? 'line-clamp-6' : ''}`}>
+                              <span dangerouslySetInnerHTML={{ __html: filteredContent.split('\n').join('<br />') }} />
+                            </div>
+                            {(messageCollapsed[index] ?? true) && filteredContent && filteredContent.split('\n').length > 6 && (
+                              <div className={`absolute bottom-0 left-0 right-0 h-16 pointer-events-none ${isHydrated ? `${themeStyles.messageCollapse?.gradientOverlay} ${themeStyles.messageCollapse?.borderRadius}` : 'bg-gradient-to-b from-transparent to-slate-800/90 rounded-lg'
+                                }`} />
+                            )}
+                          </div>
                         </div>
-                        {(messageCollapsed[index] ?? true) && filteredContent && filteredContent.split('\n').length > 6 && (
-                          <div className={`absolute bottom-0 left-0 right-0 h-16 pointer-events-none ${isHydrated ? `${themeStyles.messageCollapse?.gradientOverlay} ${themeStyles.messageCollapse?.borderRadius}` : 'bg-gradient-to-b from-transparent to-slate-800/90 rounded-lg'
-                            }`} />
+                        {filteredContent && filteredContent.split('\n').length > 3 && (
+                          <div
+                            className="mt-3 text-xs text-slate-400 text-center cursor-pointer hover:text-slate-300 flex items-center justify-center gap-1"
+                            onClick={() => {
+                              setMessageCollapsed(prev => ({
+                                ...prev,
+                                [index]: !(prev[index] ?? true)
+                              }));
+                            }}
+                          >
+                            {messageCollapsed[index] ?? true ? (
+                              <>
+                                <span>Show More</span>
+                                <DownOutlined className="text-xs" />
+                              </>
+                            ) : (
+                              <>
+                                <span>Show Less</span>
+                                <UpOutlined className="text-xs" />
+                              </>
+                            )}
+                          </div>
                         )}
-                      </div>
-                    </div>
-                    {filteredContent && filteredContent.split('\n').length > 3 && (
-                      <div
-                        className="mt-3 text-xs text-slate-400 text-center cursor-pointer hover:text-slate-300 flex items-center justify-center gap-1"
-                        onClick={() => {
-                          setMessageCollapsed(prev => ({
-                            ...prev,
-                            [index]: !(prev[index] ?? true)
-                          }));
-                        }}
-                      >
-                        {messageCollapsed[index] ?? true ? (
-                          <>
-                            <span>Show More</span>
-                            <DownOutlined className="text-xs" />
-                          </>
-                        ) : (
-                          <>
-                            <span>Show Less</span>
-                            <UpOutlined className="text-xs" />
-                          </>
-                        )}
-                      </div>
-                    )}
 
-                    {message.showLoading && (
-                      <div className="inline-flex items-center ml-2 mt-1">
-                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></div>
-                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce ml-1" style={{ animationDelay: '0.2s' }}></div>
-                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce ml-1" style={{ animationDelay: '0.4s' }}></div>
+                        {message.showLoading && (
+                          <div className="inline-flex items-center ml-2 mt-1">
+                            <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></div>
+                            <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce ml-1" style={{ animationDelay: '0.2s' }}></div>
+                            <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce ml-1" style={{ animationDelay: '0.4s' }}></div>
+                          </div>
+                        )}
                       </div>
-                    )}
+                    }
                   </div>
-                )}
+                </div>
               </div>
-            </div>
-            </div>
               {/* 去掉小三角形 */}
+            </div>
+          </div>
+          <div className="text-[10px] text-slate-400 mt-1 ml-2">
+            {new Date(message.timestamp).toLocaleString()}
           </div>
         </div>
-        <div className="text-[10px] text-slate-400 mt-1 ml-2">
-          {new Date(message.timestamp).toLocaleString()}
-        </div>
-      </div>
-    );
+      );
       return elements;
     }
   };
@@ -1774,22 +1436,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               : 'w-[100%] max-w-5xl'
             } relative flex flex-col`}>
 
-            {/* 调试面板开关 */}
-            {!isEntryPage && (
-              <div className="absolute right-2 top-2 z-20 flex items-center gap-2">
-                <button
-                  onClick={() => setIsDebugOpen(v => !v)}
-                  className="px-2 py-1 text-xs rounded-md"
-                  style={{
-                    background: '#334155',
-                    color: '#E2E8F0',
-                    border: '1px solid rgba(255,255,255,0.16)'
-                  }}
-                >
-                  {isDebugOpen ? '关闭调试' : '打开调试'}
-                </button>
-              </div>
-            )}
+
 
             {isMobile && (
               <div className="bg-gradient-to-r from-red-600 to-pink-700 text-white px-4 py-2.5 text-xs font-medium shadow-md rounded-md my-2">
@@ -1812,49 +1459,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               justifyContent: messages.length === 0 && isEntryPage ? 'center' : 'flex-start',
               marginBottom: !isEntryPage ? '128px' : '0',
             }}>
-              {/* 调试面板 */}
-              {isDebugOpen && !isEntryPage && (
-                <div className="mb-3">
-                  <div
-                    className="rounded-lg p-3 text-xs"
-                    style={{
-                      border: '1px solid rgba(255, 255, 255, 0.16)',
-                      background: '#0B1421',
-                      color: '#D1D5DB',
-                      maxHeight: '240px',
-                      overflowY: 'auto'
-                    }}
-                  >
-                    <div className="mb-2 font-medium" style={{color:'#93C5FD'}}>ID 调试（最近 200 条，仅勾选/生成相关）</div>
-                    {idDebugLogs.length === 0 && (
-                      <div style={{color:'#94A3B8'}}>暂无调试信息</div>
-                    )}
-                    {idDebugLogs.map((log) => (
-                      <div key={log.id} className="mb-2">
-                        <div className="flex items-center gap-2">
-                          <span style={{color: log.level === 'send' ? '#34D399' : log.level === 'recv' ? '#60A5FA' : log.level === 'error' ? '#F87171' : '#E5E7EB'}}>
-                            [{log.level.toUpperCase()}]
-                          </span>
-                          <span style={{color:'#94A3B8'}}>{log.time}</span>
-                          {log.hubId && (
-                            <span className="px-1.5 py-0.5 rounded" style={{background:'#1E293B', color:'#93C5FD'}}>
-                              hubId: {log.hubId}
-                            </span>
-                          )}
-                          {log.messageType && (
-                            <span className="px-1.5 py-0.5 rounded" style={{background:'#1F2937', color:'#E5E7EB'}}>
-                              type: {log.messageType}
-                            </span>
-                          )}
-                        </div>
-                        <pre className="whitespace-pre-wrap break-words" style={{color:'#CBD5E1'}}>
-{typeof log.raw === 'string' ? log.raw : JSON.stringify(log.raw, null, 2)}
-                        </pre>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+
 
               {showSlogan && messages.length === 0 && (
                 <div style={{
@@ -1863,6 +1468,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                   textAlign: 'center',
                   width: '100%'
                 }}>
+
                   {/* 新增顶部区域 */}
                   <div style={{
                     display: 'flex',
@@ -1935,9 +1541,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 borderRadius: isHydrated ? (themeStyles.inputArea?.borderRadius || '16px') : '16px',
                                 background: isHydrated ? (currentTheme === 'dark' ? (themeStyles.inputArea?.background || '#0B1421') : '#FFFFFF') : 'transparent',
                                 boxShadow: isHydrated ? (currentTheme === 'dark' ? (themeStyles.inputArea?.boxShadow || '0px 4px 16px 0px rgba(255, 255, 255, 0.08)') : '0px 4px 16px 0px rgba(0, 0, 0, 0.08)') : '0 2px 16px 0 rgba(30,41,59,0.08)',
-                                backdropFilter: 'blur(2px)',
+                              backdropFilter: 'blur(2px)',
+                              position: 'relative',
                               }}
                             >
+                              {/* 渐变边框 */}
                               <div
                                 style={{
                                   content: '""',
@@ -1945,7 +1553,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                   inset: 0,
                                   borderRadius: '1rem',
                                   padding: '1px',
-                                  background: 'linear-gradient(101deg, rgba(51, 111, 255, 1) 20.01%, rgba(166, 113, 252, 0.3) 56.73%, rgba(245, 137, 79, 0.1) 92.85%)',
+                                  background: currentTheme === 'dark'
+                                    ? 'linear-gradient(101deg, rgba(51, 111, 255, 0.95) 0%, rgba(255, 255, 255, 0.25) 100%)'
+                                    : 'linear-gradient(101deg, rgba(51, 111, 255, 1) 0%, rgba(255, 255, 255, 0.95) 100%)',
                                   WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
                                   WebkitMaskComposite: 'xor',
                                   maskComposite: 'exclude',
@@ -1965,6 +1575,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 onDomainProcessed={(domain, websiteId) => {
                                   // 这里可以添加额外的域名处理逻辑
                                 }}
+                                variant="bare"
                               />
                             </div>
                           </div>
@@ -1974,7 +1585,31 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                   )}
                 </div>
               )}
-              {combinedMessages.map((message, index) => renderChatMessage(message, index))}
+              {/* 渲染消息，同时在首个用户消息之后插入 Agent Processing 面板 */}
+              {(() => {
+                let inserted = false;
+                return combinedMessages.flatMap((message, index) => {
+                  const nodes: any[] = [];
+                  const msgNode = renderChatMessage(message, index);
+                  if (msgNode) nodes.push(msgNode);
+                  if (!inserted && showAgentPanel && message?.source === 'user') {
+                    nodes.push(
+                      <div key={`agent-panel-after-${index}`} className="mb-4 animate-slideUp">
+                        <AgentProcessingPanel
+                          steps={AGENT_STEPS as any}
+                          statusMap={agentStepStatus as any}
+                          themeStyles={themeStyles}
+                          isHydrated={isHydrated}
+                          isExpanded={isAgentPanelExpanded}
+                          onToggle={() => setIsAgentPanelExpanded(!isAgentPanelExpanded)}
+                        />
+                      </div>
+                    );
+                    inserted = true;
+                  }
+                  return nodes;
+                });
+              })()}
               <div ref={chatEndRef} />
             </div>
 
@@ -2037,8 +1672,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                               background: isHydrated ? (themeStyles.inputArea?.background || '#FFF') : 'transparent',
                               boxShadow: isHydrated ? (themeStyles.inputArea?.boxShadow || '0px 4px 16px 0px rgba(255, 255, 255, 0.08)') : '0 2px 16px 0 rgba(30,41,59,0.08)',
                               backdropFilter: 'blur(2px)',
+                              position: 'relative',
                             }}
                           >
+                            {/* 渐变边框 */}
                             <div
                               style={{
                                 content: '""',
@@ -2046,7 +1683,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 inset: 0,
                                 borderRadius: '1rem',
                                 padding: '1px',
-                                background: 'linear-gradient(101deg, rgba(51, 111, 255, 1) 20.01%, rgba(166, 113, 252, 0.3) 56.73%, rgba(245, 137, 79, 0.1) 92.85%)',
+                                background: currentTheme === 'dark'
+                                  ? 'linear-gradient(101deg, rgba(51, 111, 255, 0.95) 0%, rgba(255, 255, 255, 0.25) 100%)'
+                                  : 'linear-gradient(101deg, rgba(51, 111, 255, 1) 0%, rgba(255, 255, 255, 0.95) 100%)',
                                 WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
                                 WebkitMaskComposite: 'xor',
                                 maskComposite: 'exclude',
@@ -2117,8 +1756,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                               onDomainProcessed={(domain, websiteId) => {
                                 // 这里可以添加额外的域名处理逻辑
                               }}
+                              variant="bare"
                             />
-                            
+
                           </div>
                         </div>
                       </div>
@@ -2146,8 +1786,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                       <button
                         onClick={() => setRightPanelTab('browser')}
                         className={`text-sm px-3 py-1 transition-colors rounded-[10px] ${rightPanelTab === 'browser'
-                            ? 'font-medium'
-                            : ''
+                          ? 'font-medium'
+                          : ''
                           }`}
                         style={{
                           backgroundColor: rightPanelTab === 'browser'
@@ -2318,7 +1958,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
       {/* WebSocket连接组件 - 只在客户端渲染 */}
       {typeof window !== 'undefined' && currentConversationId && (
-        <WebSocketConnection 
+        <WebSocketConnection
           ref={webSocketRef}
           conversationId={currentConversationId}
           domain={currentDomain || undefined}
@@ -2328,7 +1968,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           onOpen={handleWebSocketOpen}
           autoConnect={true}
           onSendMessage={undefined}
-          onThemeSwitch={switchTheme}
         />
       )}
     </>

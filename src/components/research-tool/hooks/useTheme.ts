@@ -89,9 +89,9 @@ const themeConfigs = {
         }
       },
       agentProcessing: {
-        background: 'bg-white/[0.04]',
-        border: 'border-white/[0.05]',
-        titleText: 'text-white'
+        background: 'bg-[#E8F5E9]',
+        border: 'border-[#C8E6C9]',
+        titleText: 'text-gray-700'
       },
       agentMessage: {
         text: 'text-white',
@@ -110,7 +110,7 @@ const themeConfigs = {
       },
       userMessage: {
         text: 'text-white',
-        background: 'bg-white/10'
+         background: 'bg-white/10'
       },
       successMessage: {
         border: '1px solid rgba(34, 197, 94, 0.2)',
@@ -270,6 +270,11 @@ const themeConfigs = {
           }
         }
       },
+      agentProcessing: {
+        background: 'bg-[#E8F5E9]',
+        border: 'border-[#C8E6C9]',
+        titleText: 'text-gray-700'
+      },
       setBrandColorButton: {
         background: 'bg-[#EFF4FF]',
         text: 'text-[#666666]'
@@ -324,9 +329,42 @@ export const useTheme = () => {
 
   useEffect(() => {
     setIsHydrated(true);
-    // 默认使用dark主题，也可以从localStorage读取用户偏好
-    const savedTheme = localStorage.getItem('research-tool-theme') as 'dark' | 'light' || 'dark';
-    setCurrentTheme(savedTheme);
+    // 跟随全局主题：优先读取全局主题存储或 DOM 上的 class
+    const getGlobalTheme = (): 'dark' | 'light' => {
+      try {
+        const t1 = (localStorage.getItem('seopage-theme') || '').toLowerCase();
+        if (t1 === 'dark' || t1 === 'light') return t1 as 'dark' | 'light';
+        const t2 = (localStorage.getItem('theme') || '').toLowerCase();
+        if (t2 === 'dark' || t2 === 'light') return t2 as 'dark' | 'light';
+        if (typeof document !== 'undefined' && document.documentElement.classList.contains('dark')) {
+          return 'dark';
+        }
+      } catch {}
+      return 'light';
+    };
+
+    setCurrentTheme(getGlobalTheme());
+
+    // 监听全局主题切换事件（来自 utils/theme-config.js）
+    const handleThemeChanged = (e: any) => {
+      const theme = (e?.detail?.theme === 'dark') ? 'dark' : 'light';
+      setCurrentTheme(theme);
+      try { localStorage.setItem('research-tool-theme', theme); } catch {}
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('themeChanged', handleThemeChanged as EventListener);
+      window.addEventListener('storage', (ev: StorageEvent) => {
+        if (ev.key === 'seopage-theme' || ev.key === 'theme') {
+          const v = (ev.newValue || '').toLowerCase();
+          setCurrentTheme(v === 'dark' ? 'dark' : 'light');
+        }
+      });
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('themeChanged', handleThemeChanged as EventListener);
+      }
+    };
   }, []);
 
   const getThemeConfig = (component: string): any => {
