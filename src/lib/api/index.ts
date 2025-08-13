@@ -104,7 +104,7 @@ const getEnvironmentConfig = () => {
     // 测试环境域名
     if (hostname.includes('localhost') || hostname.includes('127.0.0.1') || hostname.includes('test')) {
       return {
-        apiUrl: 'https://api.zhuyuejoey.com/v1',
+        apiUrl: 'https://api.websitelm.com/v1',
         chatApiUrl: 'https://agents.zhuyuejoey.com',
         chatWsUrl: 'wss://agents.zhuyuejoey.com'
       };
@@ -122,7 +122,7 @@ const getEnvironmentConfig = () => {
 
   // 默认使用测试环境
   return {
-    apiUrl: 'https://api.zhuyuejoey.com/v1',
+    apiUrl: 'https://api.websitelm.com/v1',
     chatApiUrl: 'https://agents.zhuyuejoey.com',
     chatWsUrl: 'wss://agents.zhuyuejoey.com'
   };
