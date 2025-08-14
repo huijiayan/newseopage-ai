@@ -48,32 +48,22 @@ export class ChatRoomService {
         message: message.substring(0, 100) + (message.length > 100 ? '...' : '')
       });
 
-      // 调用聊天API
+      // 调用聊天API（仅创建会话并返回会话ID）
       const response = await apiClient.chatWithAI(
         this.config.chatType,
         message,
         this.config.conversationId
       );
 
-      // 检查响应格式
-      if (response && 'websocket' in response) {
+      // 新逻辑：返回创建成功与会话ID
+      if (response && (response as any).conversationId) {
         return {
           success: true,
-          conversationId: this.config.conversationId || `temp-${Date.now()}`,
+          conversationId: (response as any).conversationId,
           message: '聊天室创建成功'
-        };
-      } else if (response && (response as any)?.message?.answer) {
-        return {
-          success: true,
-          conversationId: this.config.conversationId || undefined,
-          message: '聊天室创建成功'
-        };
-      } else {
-        return {
-          success: false,
-          error: '聊天室创建失败'
         };
       }
+      return { success: false, error: '聊天室创建失败' };
     } catch (error: any) {
       return {
         success: false,
@@ -104,16 +94,7 @@ export class ChatRoomService {
   // 启动竞品搜索 - 新增功能
   async startCompetitorSearch(tempConversationId: string, formattedInput: string): Promise<CompetitorSearchResponse> {
     try {
-      console.log('🔍 竞品搜索启动');
-      console.log('🔍 API调用: apiClient.searchCompetitor(tempConversationId, formattedInput)');
-      console.log('🔍 功能: 开始搜索竞争对手');
-      
       const response = await apiClient.searchCompetitor(tempConversationId, formattedInput);
-      
-      console.log('🔍 响应处理:');
-      console.log('🔍 检查任务状态 (sitemapStatus)');
-      console.log('🔍 处理各种错误码 (1075, 1058, 13002)');
-      
       if (response?.code === 200) {
         return {
           success: true,
@@ -153,9 +134,6 @@ export class ChatRoomService {
   // 检查sitemap状态 - 新增功能
   async checkSitemapStatus(websiteId: string): Promise<SitemapStatusResponse> {
     try {
-      console.log('🔍 检查sitemap状态');
-      console.log('🔍 搜索完成之后，还要检查sitemapstatus网站地图的处理');
-      console.log('🔍 这些数据通过实时聊天将后端的数据推到前端');
       
       const response = await apiClient.getWebsiteSitemap(websiteId);
       
@@ -217,107 +195,8 @@ export class ChatRoomService {
     }
   }
 
-  // 根据域名查找websiteId - 不调用历史记录
-  async findWebsiteIdByDomain(domain: string): Promise<string | null> {
-    try {
-      console.log('🔍 根据域名查找websiteId:', domain);
-      console.log('🔍 ✅ 跳过历史记录获取，直接生成新的websiteId');
-      
-      // 不调用历史记录API，直接生成新的websiteId
-      try {
-        const generateResponse = await apiClient.generateWebsiteId();
-        if (generateResponse?.code === 200 && generateResponse.data?.websiteId) {
-          console.log('🔍 ✅ 生成新的websiteId:', generateResponse.data.websiteId);
-          return generateResponse.data.websiteId;
-        } else {
-          console.log('🔍 ⚠️ 生成websiteId失败，使用回退方案');
-          // 回退方案：生成一个基于时间戳的websiteId
-          const fallbackWebsiteId = `generated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          console.log('🔍 使用回退websiteId:', fallbackWebsiteId);
-          return fallbackWebsiteId;
-        }
-      } catch (error: any) {
-        console.error('🔍 生成websiteId失败:', error);
-        // 最后的回退方案
-        const fallbackWebsiteId = `fallback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        console.log('🔍 使用最终回退websiteId:', fallbackWebsiteId);
-        return fallbackWebsiteId;
-      }
-    } catch (error: any) {
-      console.error('🔍 查找websiteId失败:', error);
-      return null;
-    }
-  }
 
-  // 使用includes进行模糊匹配
-  private findWebsiteByDomain(domain: string, websites: any[]): any | null {
-    const cleanDomain = domain.toLowerCase().trim();
-    
-    // 精确匹配
-    for (const website of websites) {
-      const websiteUrl = website.websiteURL || website.website || '';
-      const websiteDomain = this.extractDomainFromUrl(websiteUrl);
-      
-      if (websiteDomain === cleanDomain) {
-        console.log('🔍 精确匹配成功:', websiteDomain);
-        return website;
-      }
-    }
-    
-    // 包含匹配
-    for (const website of websites) {
-      const websiteUrl = website.websiteURL || website.website || '';
-      const websiteDomain = this.extractDomainFromUrl(websiteUrl);
-      
-      if (websiteDomain.includes(cleanDomain) || cleanDomain.includes(websiteDomain)) {
-        console.log('🔍 包含匹配成功:', websiteDomain, '包含', cleanDomain);
-        return website;
-      }
-    }
-    
-    // 部分匹配（域名的主要部分）
-    const domainParts = cleanDomain.split('.');
-    if (domainParts.length >= 2) {
-      const mainDomain = domainParts.slice(-2).join('.');
-      
-      for (const website of websites) {
-        const websiteUrl = website.websiteURL || website.website || '';
-        const websiteDomain = this.extractDomainFromUrl(websiteUrl);
-        const websiteDomainParts = websiteDomain.split('.');
-        
-        if (websiteDomainParts.length >= 2) {
-          const websiteMainDomain = websiteDomainParts.slice(-2).join('.');
-          
-          if (mainDomain === websiteMainDomain) {
-            console.log('🔍 主域名匹配成功:', mainDomain);
-            return website;
-          }
-        }
-      }
-    }
-    
-    console.log('🔍 未找到匹配的网站');
-    return null;
-  }
 
-  // 从URL中提取域名
-  private extractDomainFromUrl(url: string): string {
-    if (!url) return '';
-    
-    try {
-      // 确保URL有协议
-      let fullUrl = url;
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        fullUrl = 'https://' + url;
-      }
-      
-      const urlObj = new URL(fullUrl);
-      return urlObj.hostname.toLowerCase();
-    } catch (error) {
-      console.error('🔍 URL解析失败:', url, error);
-      return url.toLowerCase();
-    }
-  }
 
   // 获取存储的域名
   getStoredDomain(): string | null {

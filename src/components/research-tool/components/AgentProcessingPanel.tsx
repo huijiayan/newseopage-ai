@@ -11,6 +11,7 @@ interface AgentProcessingPanelProps {
   isHydrated?: boolean;
   isExpanded?: boolean;
   onToggle?: () => void;
+  onViewStep?: (stepKey: string) => void;
 }
 
 const StatusIcon: React.FC<{ status: StepStatus }> = ({ status }) => {
@@ -47,7 +48,8 @@ export const AgentProcessingPanel: React.FC<AgentProcessingPanelProps> = ({
   themeStyles,
   isHydrated,
   isExpanded = true,
-  onToggle
+  onToggle,
+  onViewStep
 }) => {
   const isDark = Boolean(
     isHydrated && typeof themeStyles?.agentProcessing?.titleText === 'string' &&
@@ -80,12 +82,17 @@ export const AgentProcessingPanel: React.FC<AgentProcessingPanelProps> = ({
           <div className={`h-px w-full ${isDark ? 'bg-white/10' : 'bg-black/5'}`} />
           <div className={`${isDark ? 'divide-white/10' : 'divide-black/5'} divide-y`}>
             {steps.map((s) => (
-              <div key={s.key} className="flex items-center justify-between px-4 py-3">
-                <div className="flex items-center gap-3">
+              <div key={s.key} className="flex items-start justify-between px-4 py-3">
+                <div className="flex items-start gap-3 flex-1 min-w-0">
                   <StatusIcon status={statusMap[s.key] || 'pending'} />
-                  <span className={`text-sm ${isDark ? 'text-white/90' : 'text-gray-700'}`}>{s.label || s.key}</span>
+                  <span className={`text-sm ${isDark ? 'text-white/90' : 'text-gray-700'} whitespace-normal break-words leading-5`}>
+                    {s.label || s.key}
+                  </span>
                 </div>
-                <button className={`text-sm ${isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-700'} flex items-center gap-1`}>
+                <button
+                  onClick={() => onViewStep && onViewStep(s.key)}
+                  className={`text-sm ${isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-700'} flex items-center gap-1`}
+                >
                   <span>View</span>
                   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />

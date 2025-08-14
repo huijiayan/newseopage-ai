@@ -74,7 +74,7 @@ export const Hero: React.FC = () => {
       const thinkingMessage = {
         id: thinkingId,
         type: 'agent',
-        content: '🤔 Thinking...',
+        content: 'Thinking...',
         isThinking: true,
         timestamp: new Date().toISOString()
       };
@@ -189,41 +189,30 @@ export const Hero: React.FC = () => {
           
           chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, tempConversationId);
           
-          // 检查响应格式 - chatWithAI接口已经生成conversationId
-          if (chatResponse && 'websocket' in chatResponse) {
-            // API响应中应该包含conversationId
-            if (chatResponse.conversationId) {
-              
-              // 更新状态并跳转
-              setCurrentConversationId(chatResponse.conversationId);
-              isFirstMessageSentForNewTaskRef.current = true;
+          // 新逻辑：chatWithAI 仅返回 conversationId
+          if (chatResponse && (chatResponse as any).conversationId) {
+            const newConvId = (chatResponse as any).conversationId as string;
+            setCurrentConversationId(newConvId);
+            isFirstMessageSentForNewTaskRef.current = true;
 
-              // 根据当前路径决定跳转目标
-              const currentPath = window.location.pathname;
-              let targetPath = '/alternative'; // 默认跳转到 alternative
-
-              if (currentPath.includes('best')) {
-                targetPath = '/best';
-              } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
-                targetPath = '/FAQ';
-              } else if (currentPath.includes('alternative')) {
-                targetPath = '/alternative';
-              }
-
-              // 跳转到聊天室页面，传递真实的conversationId
-              router.replace(`${targetPath}?conversationId=${chatResponse.conversationId}`);
-              
-              // 清空消息列表，因为要跳转到新页面
-              setMessages([]);
-              setShowSlogan(false);
-              
-              return;
-            } else {
-              messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
-              setIsMessageSending(false);
-              setLoading(false);
-              return;
+            // 根据当前路径决定跳转目标
+            const currentPath = window.location.pathname;
+            let targetPath = '/alternative';
+            if (currentPath.includes('best')) {
+              targetPath = '/best';
+            } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+              targetPath = '/FAQ';
+            } else if (currentPath.includes('alternative')) {
+              targetPath = '/alternative';
             }
+
+            // 跳转到聊天室页面，传递真实的conversationId
+            router.replace(`${targetPath}?conversationId=${newConvId}`);
+
+            // 清空消息列表，因为要跳转到新页面
+            setMessages([]);
+            setShowSlogan(false);
+            return;
           } else {
             messageHandler.updateAgentMessage('Failed to create a new task. Please try again.', thinkingMessageId);
             setIsMessageSending(false);

@@ -104,3 +104,32 @@
     height: 40px;
   }
 }
+
+/* Login modal: taller eye button for register inputs */
+.register-eye-btn {
+  height: 140% !important;
+}
+
+/* Reusable: glowing card wrapper (soft blue halo + layered shadow) */
+.glow-card {
+  position: relative;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 8px rgba(2, 6, 23, 0.06),
+    0 12px 24px rgba(2, 6, 23, 0.08);
+}
+.glow-card::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  right: -10px;
+  top: -12px;
+  bottom: -12px;
+  border-radius: 20px;
+  background: radial-gradient(120% 120% at 50% 0%, rgba(59,130,246,0.18), rgba(99,102,241,0.15) 40%, transparent 65%);
+  filter: blur(12px);
+  z-index: 0;
+  pointer-events: none;
+}

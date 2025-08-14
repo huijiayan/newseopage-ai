@@ -28,6 +28,7 @@ export class WebSocketChatV2 {
   private isConnecting = false;
   private isConnected = false;
   private connectionTimeout: NodeJS.Timeout | null = null;
+  private debugEnabled: boolean = false;
   
   // 自动重连相关
   private reconnectAttempts = 0;
@@ -39,6 +40,17 @@ export class WebSocketChatV2 {
 
   constructor(config: WebSocketConfig) {
     this.config = config;
+    // 在开发环境或设置了本地开关 wsDebug=1 时启用日志
+    try {
+      const localDebug = this.isClient() ? (localStorage.getItem('wsDebug') === '1') : false;
+      this.debugEnabled = (process.env.NODE_ENV === 'development') || localDebug;
+    } catch { this.debugEnabled = (process.env.NODE_ENV === 'development'); }
+  }
+
+  private log(...args: any[]): void {
+    if (this.debugEnabled) {
+      try { console.log(...args); } catch {}
+    }
   }
 
   private isClient(): boolean {
@@ -104,6 +116,7 @@ export class WebSocketChatV2 {
     this.reconnectTimer = setTimeout(() => {
       this.isReconnecting = false;
       if (this.shouldReconnect) {
+        this.log('🔁 WebSocket 重连尝试', { attempts: this.reconnectAttempts, delay });
         this.connect().catch(() => {});
       }
     }, delay);
@@ -125,7 +138,7 @@ export class WebSocketChatV2 {
       
       try {
         const wsUrl = this.getWebSocketUrl();
-        
+        this.log('🌐 WebSocket 连接中...', wsUrl);
         this.websocket = new WebSocket(wsUrl);
 
         // 设置连接超时
@@ -163,23 +176,24 @@ export class WebSocketChatV2 {
             } catch {}
           }
           
+          this.log('✅ WebSocket 连接成功');
           this.config.onOpen?.();
           resolve();
         };
 
         this.websocket.onmessage = (event) => {
           // 仅转发原始数据，不做JSON解析
-          if (process.env.NODE_ENV === 'development') {
-            console.log('🔍 WebSocket V2 收到原始消息:', event.data);
-          }
+          this.log('📨 WebSocket V2 收到原始消息:', event.data);
           this.config.onMessage?.(event.data);
         };
 
         this.websocket.onerror = (error) => {
+          this.log('❌ WebSocket 连接错误:', error);
           this.handleConnectionFailure('连接错误', reject, error);
         };
 
         this.websocket.onclose = (event) => {
+          this.log('🔌 WebSocket 连接关闭:', event.code, event.reason);
           this.handleConnectionClose(event);
           
           // 如果不是正常关闭且启用重连，则尝试重连
@@ -197,6 +211,7 @@ export class WebSocketChatV2 {
   private handleConnectionFailure(reason: string, reject: (error: any) => void, error?: any) {
     this.isConnecting = false;
     this.isConnected = false;
+    this.log('❌ 连接失败:', reason, error);
     
     // 清除连接超时
     if (this.connectionTimeout) {
@@ -206,6 +221,11 @@ export class WebSocketChatV2 {
     
     this.config.onError?.(error || new Error(reason));
     reject(error || new Error(reason));
+
+    // 若在握手阶段失败，部分浏览器只触发 onerror 不触发 onclose，这里也安排一次重连
+    if (this.shouldReconnect) {
+      this.scheduleReconnect();
+    }
   }
 
   private handleConnectionClose(event: CloseEvent) {
@@ -236,6 +256,7 @@ export class WebSocketChatV2 {
     }
 
     if (this.websocket) {
+      this.log('⏹️ 主动关闭 WebSocket');
       this.websocket.close(1000, '正常关闭');
       this.websocket = null;
     }

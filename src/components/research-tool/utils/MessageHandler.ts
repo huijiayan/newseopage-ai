@@ -12,119 +12,86 @@ export class MessageHandler {
   }
 
   // 对应老代码中的addUserMessage方法
-  addUserMessage(content: string): void {
+  addUserMessage(content: string, seq?: number): void {
     const userMessage: ConversationMessage = {
       id: `user-${Date.now()}`,
       source: 'user',
       content,
       timestamp: new Date().toISOString(),
+      seq,
     };
     
-    this.setMessages(prev => [...prev, userMessage]);
+    this.setMessages(prev => {
+      const next = [...prev, userMessage];
+      next.sort((a, b) => {
+        const ta = new Date((a.timestamp as string) || (a.createdAt as string) || 0).getTime();
+        const tb = new Date((b.timestamp as string) || (b.createdAt as string) || 0).getTime();
+        return ta - tb;
+      });
+      return next;
+    });
   }
 
   // 对应老代码中的addSystemMessage方法
-  addSystemMessage(content: string): void {
+  addSystemMessage(content: string, seq?: number): void {
     const systemMessage: ConversationMessage = {
       id: `system-${Date.now()}`,
       source: 'system',
       content,
       timestamp: new Date().toISOString(),
+      seq,
     };
     
-    this.setMessages(prev => [...prev, systemMessage]);
+    this.setMessages(prev => {
+      const next = [...prev, systemMessage];
+      next.sort((a, b) => {
+        const ta = new Date((a.timestamp as string) || (a.createdAt as string) || 0).getTime();
+        const tb = new Date((b.timestamp as string) || (b.createdAt as string) || 0).getTime();
+        return ta - tb;
+      });
+      return next;
+    });
   }
 
   // 对应老代码中的addAgentThinkingMessage方法
-  addAgentThinkingMessage(): string {
+  addAgentThinkingMessage(seq?: number, timestampOverride?: string): string {
     const messageId = `thinking-${Date.now()}`;
     const thinkingMessage: ConversationMessage = {
       id: messageId,
       source: 'agent',
       content: '',
-      timestamp: new Date().toISOString(),
+      timestamp: timestampOverride || new Date().toISOString(),
       isThinking: true,
+      seq,
     };
     
-    this.setMessages(prev => [...prev, thinkingMessage]);
+    this.setMessages(prev => {
+      const next = [...prev, thinkingMessage];
+      next.sort((a, b) => {
+        const ta = new Date((a.timestamp as string) || (a.createdAt as string) || 0).getTime();
+        const tb = new Date((b.timestamp as string) || (b.createdAt as string) || 0).getTime();
+        return ta - tb;
+      });
+      return next;
+    });
     this.isProcessing = true;
     return messageId;
   }
 
   // 对应老代码中的updateAgentMessage方法
   updateAgentMessage(content: string, messageId: string): void {
-    this.setMessages(prev => prev.map(msg => 
-      msg.id === messageId 
+    this.setMessages(prev => {
+      const next = prev.map(msg => msg.id === messageId 
         ? { ...msg, content, isThinking: false, showLoading: false }
-        : msg
-    ));
+        : msg);
+      next.sort((a, b) => {
+        const ta = new Date((a.timestamp as string) || (a.createdAt as string) || 0).getTime();
+        const tb = new Date((b.timestamp as string) || (b.createdAt as string) || 0).getTime();
+        return ta - tb;
+      });
+      return next;
+    });
     this.isProcessing = false;
-  }
-
-  // 对应老代码中的addGenerateSitemapButtonMessage方法
-  addGenerateSitemapButtonMessage(onGenerate: () => void): void {
-    const buttonMessage: ConversationMessage = {
-      id: `sitemap-button-${Date.now()}`,
-      type: 'sitemap-button',
-      content: 'Generate sitemap pages',
-      timestamp: new Date().toISOString(),
-      source: 'system',
-      onGenerate,
-    };
-    
-    this.setMessages(prev => [...prev, buttonMessage]);
-  }
-
-  // 对应老代码中的addCustomCongratsMessage方法
-  addCustomCongratsMessage(config: { text: string; buttons: Array<{ label: string; action: string }> }): void {
-    const congratsMessage: ConversationMessage = {
-      id: `congrats-${Date.now()}`,
-      type: 'custom-congrats',
-      content: config.text,
-      timestamp: new Date().toISOString(),
-      source: 'system',
-    };
-    
-    this.setMessages(prev => [...prev, congratsMessage]);
-  }
-
-  // 对应老代码中的handleErrorMessage方法
-  handleErrorMessage(error: any, messageId?: string): void {
-    const errorContent = error?.message || 'An unexpected error occurred. Please try again.';
-    
-    if (messageId) {
-      this.updateAgentMessage(`⚠️ ${errorContent}`, messageId);
-    } else {
-      this.addSystemMessage(`⚠️ ${errorContent}`);
-    }
-    this.isProcessing = false;
-  }
-
-  // 对应老代码中的addImportantTip方法
-  addImportantTip(content: string): void {
-    const tipMessage: ConversationMessage = {
-      id: `tip-${Date.now()}`,
-      type: 'important-tip',
-      content,
-      timestamp: new Date().toISOString(),
-      source: 'system',
-    };
-    
-    this.setMessages(prev => [...prev, tipMessage]);
-  }
-
-  // 对应老代码中的addConfirmButton方法
-  addConfirmButton(content: string, onConfirm: () => void): void {
-    const buttonMessage: ConversationMessage = {
-      id: `confirm-button-${Date.now()}`,
-      type: 'confirm-button',
-      content,
-      timestamp: new Date().toISOString(),
-      source: 'system',
-      onConfirm,
-    };
-    
-    this.setMessages(prev => [...prev, buttonMessage]);
   }
 
   // 清理所有消息
@@ -133,62 +100,6 @@ export class MessageHandler {
     this.isProcessing = false;
   }
 
-  // 移除特定消息
-  removeMessage(messageId: string): void {
-    this.setMessages(prev => prev.filter(msg => msg.id !== messageId));
-  }
-
-  // 更新特定消息
-  updateMessage(messageId: string, updates: Partial<ConversationMessage>): void {
-    this.setMessages(prev => prev.map(msg => 
-      msg.id === messageId 
-        ? { ...msg, ...updates }
-        : msg
-    ));
-  }
-
-  // 处理竞品搜索状态更新 - 已停止使用
-  // handleCompetitorSearchUpdate(data: any): void {
-  //   console.log('🔍 处理竞品搜索状态更新:', data);
-  //   
-  //   if (data.status === 'started') {
-  //     this.addSystemMessage('🔍 竞品搜索已启动，正在搜索竞争对手...');
-  //   } else if (data.status === 'processing') {
-  //     this.addSystemMessage(`🔄 竞品搜索进行中... ${data.progress || 0}%`);
-  //   } else if (data.status === 'completed') {
-  //     this.addSystemMessage(`✅ 竞品搜索完成，找到 ${data.competitorsCount || 0} 个竞争对手`);
-  //   } else if (data.status === 'failed') {
-  //     this.addSystemMessage(`❌ 竞品搜索失败: ${data.error || '未知错误'}`);
-  //   }
-  // }
-
-  // 处理sitemap状态更新 - 已停止使用
-  // handleSitemapStatusUpdate(data: any): void {
-  //   console.log('🔍 处理sitemap状态更新:', data);
-  //   
-  //   if (data.status === 'processing') {
-  //     this.addSystemMessage(`🔄 网站地图处理中... ${data.progress || 0}%`);
-  //   } else if (data.status === 'completed') {
-  //     this.addSystemMessage('✅ 网站地图处理完成');
-  //   } else if (data.status === 'failed') {
-  //     this.addSystemMessage(`❌ 网站地图处理失败: ${data.error || '未知错误'}`);
-  //   }
-  // }
-
-  // 处理任务状态更新 - 已停止使用
-  // handleTaskStatusUpdate(data: any): void {
-  //   console.log('🔍 处理任务状态更新:', data);
-  //   
-  //   if (data.status === 'started') {
-  //     this.addSystemMessage('🚀 任务已启动');
-  //   } else if (data.status === 'processing') {
-  //     this.addSystemMessage(`🔄 任务处理中... ${data.progress || 0}%`);
-  //   } else if (data.status === 'completed') {
-  //     this.addSystemMessage('✅ 任务完成');
-  //   } else if (data.status === 'failed') {
-  //     this.addSystemMessage(`❌ 任务失败: ${data.error || '未知错误'}`);
-  //   }
-  // }
 
   // 处理WebSocket消息 - 简化功能
   handleWebSocketMessage(data: any): void {

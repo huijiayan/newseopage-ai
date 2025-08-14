@@ -51,14 +51,12 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
     background: 'linear-gradient(180deg, #121826 0%, #030810 100%)'
   };
   
-  // 只在开发环境下输出渲染日志
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🔍 WebSocketConnection组件渲染:', {
-      conversationId,
-      domain,
-      autoConnect,
-      enableAutoReconnect
-    });
+  // 可控日志：本地设置 wsDebug=1 时即使生产也会打印
+  const shouldDebug = (() => {
+    try { return (process.env.NODE_ENV === 'development') || (typeof window !== 'undefined' && localStorage.getItem('wsDebug') === '1'); } catch { return process.env.NODE_ENV === 'development'; }
+  })();
+  if (shouldDebug) {
+    console.log('🔍 WebSocketConnection组件渲染:', { conversationId, domain, autoConnect, enableAutoReconnect });
   }
   
   const [chatService, setChatService] = useState<WebSocketChatV2 | null>(null);
@@ -223,9 +221,7 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
       lastConnectionTime.current = now;
       connectionAttempts.current++;
 
-        if (process.env.NODE_ENV === 'development') {
-          console.log('尝试建立 WebSocket 连接');
-        }
+        if (shouldDebug) console.log('尝试建立 WebSocket 连接');
 
       const service = await connectWebSocketChatV2(
         conversationId,
@@ -238,9 +234,7 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
           handleConnectionFailure('连接错误', error);
         },
         (event: CloseEvent) => {
-            if (process.env.NODE_ENV === 'development') {
-              console.log('🔍 WebSocket连接关闭:', event.code, event.reason);
-            }
+            if (shouldDebug) console.log('🔍 WebSocket连接关闭:', event.code, event.reason);
           // 停止心跳
           if (heartbeatIntervalRef.current) {
             clearInterval(heartbeatIntervalRef.current);
@@ -251,9 +245,7 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
           onClose?.(event);
         },
         () => {
-            if (process.env.NODE_ENV === 'development') {
-              console.log('🔍 WebSocket连接成功');
-            }
+            if (shouldDebug) console.log('🔍 WebSocket连接成功');
           setIsConnected(true);
           setConnectionState('OPEN');
           setError(null);
@@ -266,9 +258,7 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
       setChatService(service);
       setIsConnecting(false);
     } catch (error: any) {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('🔍 WebSocket连接失败:', error);
-        }
+        if (shouldDebug) console.error('🔍 WebSocket连接失败:', error);
       handleConnectionFailure('连接失败', error);
       setIsConnecting(false);
     }
@@ -276,9 +266,7 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
 
   // 手动重连
   const reconnect = useCallback(() => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔍 手动重连');
-    }
+    if (shouldDebug) console.log('🔍 手动重连');
     reconnectAttempts.current = 0; // 重置重连计数
     // 直接委托给底层类
     if (chatService) {
@@ -292,9 +280,7 @@ export const WebSocketConnection = React.forwardRef<WebSocketConnectionRef, WebS
   // 断开连接
   const disconnect = useCallback(() => {
     if (chatService) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('🔍 断开WebSocket连接');
-      }
+      if (shouldDebug) console.log('🔍 断开WebSocket连接');
       
       // 停止心跳
       if (heartbeatIntervalRef.current) {

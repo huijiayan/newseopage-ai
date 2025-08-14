@@ -76,7 +76,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       console.error = original.error;
     };
   }, []);
-
   const [chatHistory, setChatHistory] = React.useState<any>(null);
   const [competitorModalMode, setCompetitorModalMode] = React.useState<'add' | 'edit'>('add');
   const [editingPage, setEditingPage] = React.useState<any>(null);
@@ -97,14 +96,24 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     { key: 'competitor_validator', label: 'competitor_validator' },
     { key: 'generate_sitemap_planning', label: 'generate_sitemap_planning' },
   ] as const;
-  type AgentKey = typeof AGENT_STEPS[number]['key'];
-  const [agentStepStatus, setAgentStepStatus] = useState<Record<AgentKey, 'pending' | 'processing' | 'success'>>({
-    competitor_retriever: 'pending',
-    competitor_validator: 'pending',
-    generate_sitemap_planning: 'pending',
-  });
+  // 多 Agent 面板：每个 agent 一个卡片，卡片下保留所有工具项及状态
+  type StepStatus = 'pending' | 'processing' | 'success';
+  interface AgentPanelState {
+    agentName: string;
+    steps: Array<{ key: string; label?: string }>;
+    statusMap: Record<string, StepStatus>;
+    queue: string[]; // 未展示的后续工具，按顺序出现
+  }
+  const [agentPanels, setAgentPanels] = useState<AgentPanelState[]>([]);
   const [showAgentPanel, setShowAgentPanel] = useState(false);
-  const [isAgentPanelExpanded, setIsAgentPanelExpanded] = useState(true);
+  // 独立展开/收起状态：每个 agent 一份
+  const [agentPanelExpandedMap, setAgentPanelExpandedMap] = useState<Record<string, boolean>>({});
+  // 记录各工具最近一次结果，用于 View 展示：按 agentName 归档
+  const [lastToolResults, setLastToolResults] = useState<Record<string, Record<string, any>>>({});
+  // 右侧覆盖层（仅改变文字展示，不改区域结构）
+  const [rightOverlay, setRightOverlay] = useState<{ visible: boolean; title?: string; content?: any }>({ visible: false });
+
+
   const recentHubIdsRef = useRef<string[]>([]);
   const pushWatchedHubId = useCallback((hubId: string) => {
     if (!hubId) return;
@@ -231,6 +240,29 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     pathname,
   } = useResearchTool(conversationId);
 
+  // 记录已提交生成的 hubPageId，用于在 UI 中彻底移除这些卡片
+  const [submittedHubIds, setSubmittedHubIds] = useState<Set<string>>(new Set());
+  // 是否将剩余卡片隐藏（不占位），提供底部按钮控制显示/隐藏
+  const [hideRemainingCards, setHideRemainingCards] = useState<boolean>(false);
+
+  // 开始生成：清空输入与已选卡片，并隐藏其余卡片；把已选的 hubPageId 标记为已提交
+  const handleStartGeneration = useCallback((params: { hubPageIds: string[]; conversationId: string | null; websiteId: string; }) => {
+    try {
+      if (Array.isArray(params.hubPageIds) && params.hubPageIds.length > 0) {
+        setSubmittedHubIds(prev => {
+          const next = new Set(prev);
+          params.hubPageIds.forEach(id => next.add(id));
+          return next;
+        });
+      }
+    } finally {
+      // 清空输入与已选项，并默认折叠剩余卡片
+      setSelectedCompetitors([]);
+      setUserInput('');
+      setHideRemainingCards(true);
+    }
+  }, [setSelectedCompetitors, setUserInput]);
+
   // WebSocket聊天功能
   // WebSocket连接管理
   const [wsConnected, setWsConnected] = useState(false);
@@ -242,9 +274,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const processedAiTextRef = useRef<Set<string>>(new Set());
   type QueueItem =
     | { kind: 'text'; content: string }
-    | { kind: 'hub_entries'; pageType?: string; entries: any[] };
+    | { kind: 'hub_entries'; pageType?: string; entries: any[] }
+    | { kind: 'html_chunk'; resultId: string; title?: string; chunk: string; replace?: boolean };
   const aiQueueRef = useRef<QueueItem[]>([]);
   const isProcessingQueueRef = useRef(false);
+
+  const agentPanelInsertedRef = useRef<boolean>(false);
 
   const typewriteToChatSequential = useCallback(async (fullText: string) => {
     const messageId = messageHandler.addAgentThinkingMessage();
@@ -296,21 +331,41 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           await typewriteToChatSequential(item.content);
         } else if (item.kind === 'hub_entries') {
           try {
-            const pages = transformHubEntriesToPages(item.entries);
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: `pages-grid-${Date.now()}`,
-                type: 'pages-grid',
-                content: '',
-                pages,
-                pageType: item.pageType || 'alternative',
-                timestamp: new Date().toISOString(),
-              } as any,
-            ]);
+            const getTs = (x: any) => new Date(x?.timestamp || x?.createdAt || Date.now()).getTime();
+            const sortedEntries = Array.isArray(item.entries)
+              ? [...item.entries].sort((a, b) => getTs(a) - getTs(b))
+              : [];
+            const pages = transformHubEntriesToPages(sortedEntries);
+            setMessages((prev) => {
+              const nowIso = new Date().toISOString();
+              const next: any[] = [
+                ...prev,
+                {
+                  id: `pages-grid-${Date.now()}`,
+                  type: 'pages-grid',
+                  content: '',
+                  pages,
+                  pageType: item.pageType || 'alternative',
+                  timestamp: nowIso,
+                },
+              ];
+              next.sort((a, b) => new Date(a.timestamp || a.createdAt || 0).getTime() - new Date(b.timestamp || b.createdAt || 0).getTime());
+              return next as any;
+            });
           } catch (err) {
             messageHandler.addSystemMessage('⚠️ 候选卡片生成失败，请重试');
           }
+        } else if (item.kind === 'html_chunk') {
+          // 累积 HTML 片段并输出到右侧 Generated Pages
+          try {
+            // 使用 localStorage 临时累积（避免刷新丢失；也可改为 useRef map）
+            const key = `html_acc_${item.resultId}`;
+            const prev = localStorage.getItem(key) || '';
+            const nextHtml = item.replace ? item.chunk : prev + item.chunk;
+            localStorage.setItem(key, nextHtml);
+            // 每次片段都尝试预览（data URL 会替换为最新内容）
+            addPreviewHtml(nextHtml, item.title || `Preview ${item.resultId.slice(0, 6)}`);
+          } catch {}
         }
       }
     } finally {
@@ -332,6 +387,15 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     });
   }, [setActiveTab, setBrowserTabs]);
 
+  // 将一段 HTML 文本以 data:URL 的形式加入右侧 Generated Pages 预览标签
+  const addPreviewHtml = useCallback((html: string, title?: string) => {
+    try {
+      if (typeof html !== 'string' || html.trim().length === 0) return;
+      const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+      addPreviewTab(dataUrl, title || 'HTML Preview');
+    } catch {}
+  }, [addPreviewTab]);
+
   // 勾选/点击 Edit 时，通过 WebSocket 的 message.type 传递 hubPageId
   const sendSelectedHubId = useCallback((hubId: string) => {
     try {
@@ -349,6 +413,15 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   }, []);
 
   const handleWebSocketMessage = (data: any) => {
+    // 抑制某些系统提示的辅助函数
+    const shouldSuppressMessage = (text: string | undefined | null): boolean => {
+      if (typeof text !== 'string') return false;
+      const suppressedPhrases = [
+        'System is analyzing competitors and generating pages',
+      ];
+      const lower = text.toLowerCase();
+      return suppressedPhrases.some(p => lower.includes(p.toLowerCase()));
+    };
 
     // 兼容字符串消息（某些后端直接发送字符串）
     let payload: any = data;
@@ -358,9 +431,349 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
     const isToolCall = !!(payload && (payload.event === 'tool_call' || payload.type === 'tool_call'));
     const isToolResult = !!(payload && (payload.event === 'tool_result' || payload.type === 'tool_result'));
+    const isChatStart = !!(payload && (payload.event === 'chat_start' || payload.type === 'chat_start'));
+    const isChatEnd =   !!(payload && (payload.event === 'chat_end'   || payload.type === 'chat_end'));
+    const isHandoffStart = !!(payload && (payload.event === 'handoff_start' || payload.type === 'handoff_start'));
+    const isHandoffEnd = !!(payload && (payload.event === 'handoff_end' || payload.type === 'handoff_end'));
+
+    // 将后续的处理逻辑封装为函数
+    const processOne = (one: any) => {
+      const isToolCallOne = !!(one && (one.event === 'tool_call' || one.type === 'tool_call'));
+      const isToolResultOne = !!(one && (one.event === 'tool_result' || one.type === 'tool_result'));
+      const isChatStartOne = !!(one && (one.event === 'chat_start' || one.type === 'chat_start'));
+      const isChatEndOne =   !!(one && (one.event === 'chat_end'   || one.type === 'chat_end'));
+      const isHandoffStartOne = !!(one && (one.event === 'handoff_start' || one.type === 'handoff_start'));
+      const isHandoffEndOne = !!(one && (one.event === 'handoff_end' || one.type === 'handoff_end'));
+
+      try {
+        // 一旦收到 chat_start，立即显示处理面板（区域样式不变，仅开启渲染）
+        if (isChatStartOne) {
+          setShowAgentPanel(true);
+        }
+
+        if (isToolCallOne) {
+          // 根据后端最新数据结构：读取 agent_name 与 tool_name，并更新面板文案
+          const agentName = (one?.agent_name || one?.content?.agent_name || one?.payload?.agent_name || '').toString().trim();
+          const toolName = (one?.tool_name || one?.content?.tool || one?.tool || '').toString().trim();
+          // 第一次遇到任何 tool_call 前，在队列中插入一次 AgentProcessingPanel 的占位指令
+          if (!agentPanelInsertedRef.current) {
+            agentPanelInsertedRef.current = true;
+            setMessages(prev => [
+              ...prev,
+              { id: `agent-panel-${Date.now()}`, type: 'agent-panel', content: '', timestamp: new Date().toISOString() } as any
+            ]);
+          }
+          if (agentName) {
+            setShowAgentPanel(true);
+            setAgentPanels(prev => {
+              const next = [...prev];
+              let idx = next.findIndex(p => p.agentName === agentName);
+              if (idx === -1) {
+                next.push({ agentName, steps: [], statusMap: {}, queue: [] });
+                idx = next.length - 1;
+              }
+              if (toolName) {
+                const panel = { ...next[idx] };
+                const alreadyVisible = panel.steps.some(s => s.key === toolName);
+                if (!alreadyVisible) {
+                  panel.steps = [...panel.steps, { key: toolName, label: toolName }];
+                }
+                panel.statusMap = { ...panel.statusMap, [toolName]: 'processing' };
+                next[idx] = panel;
+              }
+              return next;
+            });
+          }
+          // 支持两种结构：state.content 与 state.messages
+          const state = one?.payload?.args?.state || {};
+          const arrContent = Array.isArray(state?.content) ? state.content : [];
+          const arrMessages = Array.isArray(state?.messages) ? state.messages : [];
+          const arr = [...arrContent, ...arrMessages];
+
+          for (const item of arr) {
+            if (item?.type === 'user_message') continue;
+            if (typeof item?.content === 'string' && item.content.trim().length > 0) {
+              if (!processedAiTextRef.current.has(item.content)) {
+                processedAiTextRef.current.add(item.content);
+                aiQueueRef.current.push({ kind: 'text', content: item.content });
+              }
+              continue;
+            }
+            const msgType = item?.type || item?._type;
+            if (msgType === 'AIMessage' && typeof item?.content === 'string' && item.content.trim().length > 0) {
+              if (!processedAiTextRef.current.has(item.content)) {
+                processedAiTextRef.current.add(item.content);
+                aiQueueRef.current.push({ kind: 'text', content: item.content });
+              }
+              continue;
+            }
+          }
+        }
+
+        // 处理 agent handoff 事件
+        if (isHandoffStartOne || isHandoffEndOne) {
+          const agentName: string = (one?.agent_name || one?.content?.agent_name || one?.payload?.agent_name || '').toString().trim();
+          const toolName: string = (one?.tool_name || one?.content?.tool || one?.tool || '').toString().trim();
+          const stepKey = `handoff:${toolName || 'unknown'}`;
+          const stepLabel = `${toolName || 'unknown'}`;
+          if (agentName) {
+            setShowAgentPanel(true);
+            setAgentPanels(prev => {
+              const next = [...prev];
+              let idx = next.findIndex(p => p.agentName === agentName);
+              if (idx === -1) {
+                next.push({ agentName, steps: [], statusMap: {}, queue: [] });
+                idx = next.length - 1;
+              }
+              const panel = { ...next[idx] };
+              if (!panel.steps.some(s => s.key === stepKey)) {
+                panel.steps = [...panel.steps, { key: stepKey, label: stepLabel }];
+              } else {
+                panel.steps = panel.steps.map(s => s.key === stepKey ? { ...s, label: stepLabel } : s);
+              }
+              panel.statusMap = { ...panel.statusMap, [stepKey]: isHandoffEndOne ? 'success' : 'processing' };
+              next[idx] = panel;
+              return next;
+            });
+            try {
+              setLastToolResults(prev => ({
+                ...prev,
+                [agentName]: { ...(prev[agentName] || {}), [stepKey]: one }
+              }));
+            } catch {}
+          }
+        }
+
+        // 处理 chat_end → 打字机消息
+        if (isChatEndOne) {
+          try {
+            const endResult = (one?.result || one?.payload?.result || one?.content || '').toString();
+            if (endResult && endResult.trim().length > 0) {
+              aiQueueRef.current.push({ kind: 'text', content: endResult });
+            }
+          } catch {}
+        }
+
+        if (isToolResultOne) {
+          // 解析 tool_result 的 hub_entries
+          const output = one?.payload?.output || one?.output || {};
+          try {
+            const agentName: string = (one?.agent_name || one?.content?.agent_name || one?.payload?.agent_name || '').toString().trim();
+            const toolName: string = (one?.tool_name || one?.content?.tool || one?.tool || '').toString().trim();
+            if (agentName) {
+              setShowAgentPanel(true);
+              setAgentPanels(prev => {
+                const next = [...prev];
+                let idx = next.findIndex(p => p.agentName === agentName);
+                if (idx === -1) {
+                  next.push({ agentName, steps: [], statusMap: {}, queue: [] });
+                  idx = next.length - 1;
+                }
+                if (toolName) {
+                  const panel = { ...next[idx] };
+                  const visible = panel.steps.some(s => s.key === toolName);
+                  if (!visible) {
+                    panel.steps = [...panel.steps, { key: toolName, label: toolName }];
+                  }
+                  panel.statusMap = { ...panel.statusMap, [toolName]: 'success' };
+                  next[idx] = panel;
+                }
+                return next;
+              });
+            }
+            const resultData = one?.result || one?.payload?.result || output?.result || output || null;
+            if (agentName && toolName && resultData) {
+              setLastToolResults(prev => ({
+                ...prev,
+                [agentName]: { ...(prev[agentName] || {}), [toolName]: resultData }
+              }));
+            }
+          } catch { }
+
+          let hubEntries: any[] = [];
+          let pageType: string | undefined = output?.page_type || output?.pageType;
+          const resultData = one?.result || one?.payload?.result || output?.result || output || null;
+          const hubEntriesCandidates = [
+            (output as any)?.hub_entries,
+            (output as any)?.result?.hub_entries,
+            (one as any)?.hub_entries,
+            (one as any)?.payload?.hub_entries,
+            (one as any)?.payload?.result?.hub_entries,
+            (one as any)?.result?.hub_entries,
+            (resultData as any)?.hub_entries,
+          ];
+          for (const candidate of hubEntriesCandidates) {
+            if (Array.isArray(candidate) && candidate.length > 0) { hubEntries = candidate; break; }
+          }
+          if (hubEntries.length === 0) {
+            const altEntriesCandidates = [
+              (output as any)?.entries,
+              (output as any)?.result?.entries,
+              (resultData as any)?.entries,
+            ];
+            for (const candidate of altEntriesCandidates) {
+              if (Array.isArray(candidate) && candidate.length > 0) { hubEntries = candidate; break; }
+            }
+          }
+          if (!pageType) {
+            pageType = (output as any)?.result?.page_type
+              || (output as any)?.result?.pageType
+              || (resultData as any)?.page_type
+              || (resultData as any)?.pageType
+              || (one as any)?.page_type
+              || (one as any)?.pageType;
+          }
+          const possibleMarkdown = output?.markdown || output?.final_markdown || one?.payload?.markdown || one?.markdown;
+          if (typeof possibleMarkdown === 'string' && possibleMarkdown.trim().length > 0) {
+            setLatestMarkdown(possibleMarkdown);
+          }
+
+          // 处理生成的页面 HTML（pages_html -> page_html，支持流式分片）
+          try {
+            const pagesHtml = (output as any)?.pages_html || (resultData as any)?.pages_html || (one as any)?.pages_html;
+            if (Array.isArray(pagesHtml)) {
+              for (const entry of pagesHtml) {
+                const resultId = entry?.result_id || entry?.id || `${Date.now()}`;
+                const title = entry?.title || resultId;
+                const pageHtml = entry?.page_html || entry?.html || '';
+                if (typeof pageHtml === 'string') {
+                  // 将整段当作一个 chunk 推入队列
+                  aiQueueRef.current.push({ kind: 'html_chunk', resultId, title, chunk: pageHtml, replace: true });
+                } else if (Array.isArray(entry?.chunks)) {
+                  // 后端若以 chunks 数组形式流式提供
+                  for (const ch of entry.chunks) {
+                    const text = typeof ch === 'string' ? ch : (ch?.text || '');
+                    if (text) aiQueueRef.current.push({ kind: 'html_chunk', resultId, title, chunk: text });
+                  }
+                }
+              }
+            }
+          } catch {}
+          if (hubEntries.length > 0) {
+            try {
+              const getTs = (x: any) => new Date(x?.timestamp || x?.createdAt || Date.now()).getTime();
+              const sortedEntries = [...hubEntries].sort((a, b) => getTs(a) - getTs(b));
+              const pages = transformHubEntriesToPages(sortedEntries);
+              setMessages((prev) => {
+                const nowIso = new Date().toISOString();
+                const next: any[] = [
+                  ...prev,
+                  {
+                    id: `pages-grid-${Date.now()}`,
+                    type: 'pages-grid',
+                    content: '',
+                    pages,
+                    pageType: pageType || 'alternative',
+                    timestamp: nowIso,
+                  },
+                ];
+                next.sort((a, b) => new Date(a.timestamp || a.createdAt || 0).getTime() - new Date(b.timestamp || b.createdAt || 0).getTime());
+                return next as any;
+              });
+            } catch (err) {
+              messageHandler.addSystemMessage('⚠️ 候选卡片生成失败，请重试');
+            }
+          }
+
+          const generatedId = output?.generated_page_id || output?.generatedPageId || output?.result_id || output?.resultId;
+          if (typeof generatedId === 'string' && generatedId.trim().length > 0) {
+            const previewUrl = `https://preview.websitelm.site/en/${generatedId}`;
+            addPreviewTab(previewUrl, `Preview ${generatedId.slice(0, 6)}`);
+            const matchedHub = recentHubIdsRef.current.find(id => typeof id === 'string' && id.length > 0);
+            logIdDebug('recv', one, matchedHub, 'tool_result');
+          }
+        }
+      } catch (e) { }
+
+      // 顺序处理队列（打字机等）
+      processAIQueue();
+
+      // 处理其他类型的消息
+      if (one.type) {
+        switch (one.type) {
+          case 'markdown': {
+            const md = typeof one.content === 'string' ? one.content : (typeof one.markdown === 'string' ? one.markdown : '');
+            if (md) setLatestMarkdown(md);
+            break;
+          }
+          case 'message':
+          case 'agent':
+            messageHandler.addSystemMessage(one.content);
+            break;
+          case 'error':
+            messageHandler.addSystemMessage(`❌ 错误: ${one.content}`);
+            break;
+          case 'system':
+            if (!shouldSuppressMessage(one.content)) {
+              messageHandler.addSystemMessage(one.content);
+            }
+            break;
+          case 'warning':
+            messageHandler.addSystemMessage(one.content);
+          default:
+            if (typeof one?.markdown === 'string') {
+              setLatestMarkdown(one.markdown);
+            } else if (typeof one?.content === 'string') {
+              if (!shouldSuppressMessage(one.content)) {
+                messageHandler.addSystemMessage(one.content);
+              }
+            }
+            const genId = one?.generated_page_id || one?.generatedPageId || one?.result_id || one?.resultId;
+            if (typeof genId === 'string' && genId.trim().length > 0) {
+              const previewUrl = `https://preview.websitelm.site/en/${genId}`;
+              addPreviewTab(previewUrl, `Preview ${genId.slice(0, 6)}`);
+              const matchedHub = recentHubIdsRef.current.find(id => typeof id === 'string' && id.length > 0);
+              logIdDebug('recv', one, matchedHub, 'default');
+            }
+            break;
+        }
+      } else {
+        const textCandidate =
+          (typeof one === 'string' && one) ||
+          (typeof one?.content === 'string' && one.content) ||
+          (typeof one?.markdown === 'string' && one.markdown) ||
+          '';
+        if (textCandidate && textCandidate.trim().length > 0) {
+          aiQueueRef.current.push({ kind: 'text', content: textCandidate });
+          processAIQueue();
+        }
+      }
+    };
+
+    // 直接处理当前消息（不使用 seq 逻辑）
 
     try {
+      // 一旦收到 chat_start，立即显示处理面板（区域样式不变，仅开启渲染）
+      if (isChatStart) {
+        setShowAgentPanel(true);
+      }
+
       if (isToolCall) {
+        // 根据后端最新数据结构：读取 agent_name 与 tool_name，并更新面板文案
+        const agentName = (payload?.agent_name || payload?.content?.agent_name || payload?.payload?.agent_name || '').toString().trim();
+        const toolName = (payload?.tool_name || payload?.content?.tool || payload?.tool || '').toString().trim();
+        if (agentName) {
+          setShowAgentPanel(true);
+          setAgentPanels(prev => {
+            const next = [...prev];
+            let idx = next.findIndex(p => p.agentName === agentName);
+            if (idx === -1) {
+              next.push({ agentName, steps: [], statusMap: {}, queue: [] });
+              idx = next.length - 1;
+            }
+            if (toolName) {
+              const panel = { ...next[idx] };
+              const alreadyVisible = panel.steps.some(s => s.key === toolName);
+              if (!alreadyVisible) {
+                panel.steps = [...panel.steps, { key: toolName, label: toolName }];
+              }
+              // 新的规则：Tool 被调用后处于等待（loading），直到收到对应的 tool_result 才成功
+              panel.statusMap = { ...panel.statusMap, [toolName]: 'processing' };
+              next[idx] = panel;
+            }
+            return next;
+          });
+        }
         // 支持两种结构：state.content 与 state.messages
         const state = payload?.payload?.args?.state || {};
         const arrContent = Array.isArray(state?.content) ? state.content : [];
@@ -389,30 +802,149 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         }
       }
 
+      // 处理 agent handoff 事件，展示到各自的 agent 卡片中
+      if (isHandoffStart || isHandoffEnd) {
+        const agentName: string = (payload?.agent_name || payload?.content?.agent_name || payload?.payload?.agent_name || '').toString().trim();
+        const toolName: string = (payload?.tool_name || payload?.content?.tool || payload?.tool || '').toString().trim();
+        const stepKey = `handoff:${toolName || 'unknown'}`;
+        // 仅展示目标名称，不展示 handoff_start / handoff_end 前缀
+        const stepLabel = `${toolName || 'unknown'}`;
+        if (agentName) {
+          setShowAgentPanel(true);
+          setAgentPanels(prev => {
+            const next = [...prev];
+            let idx = next.findIndex(p => p.agentName === agentName);
+            if (idx === -1) {
+              next.push({ agentName, steps: [], statusMap: {}, queue: [] });
+              idx = next.length - 1;
+            }
+            const panel = { ...next[idx] };
+            if (!panel.steps.some(s => s.key === stepKey)) {
+              panel.steps = [...panel.steps, { key: stepKey, label: stepLabel }];
+            } else {
+              panel.steps = panel.steps.map(s => s.key === stepKey ? { ...s, label: stepLabel } : s);
+            }
+            panel.statusMap = { ...panel.statusMap, [stepKey]: isHandoffEnd ? 'success' : 'processing' };
+            next[idx] = panel;
+            return next;
+          });
+          try {
+            setLastToolResults(prev => ({
+              ...prev,
+              [agentName]: { ...(prev[agentName] || {}), [stepKey]: payload }
+            }));
+          } catch {}
+        }
+      }
+
+      // 处理 chat_end：将 result 作为一条AI文本消息展示（打字机效果），紧随用户消息之后
+      if (isChatEnd) {
+        try {
+          const endResult = (payload?.result || payload?.payload?.result || payload?.content || '').toString();
+          if (endResult && endResult.trim().length > 0) {
+            aiQueueRef.current.push({ kind: 'text', content: endResult });
+          }
+        } catch {}
+      }
+
       if (isToolResult) {
-        // 解析 tool_result 的 hub_entries（常见在 payload.output.hub_entries）
+        // 解析 tool_result 的 hub_entries（兼容多种后端返回结构）
         const output = payload?.payload?.output || payload?.output || {};
         // 更新 AgentProcessing 面板
+        let resultData: any = null;
         try {
-          const toolName: string = (payload?.content?.tool || payload?.tool || '').trim();
-          if (toolName) {
+          const agentName: string = (payload?.agent_name || payload?.content?.agent_name || payload?.payload?.agent_name || '').toString().trim();
+          const toolName: string = (payload?.tool_name || payload?.content?.tool || payload?.tool || '').toString().trim();
+          if (agentName) {
             setShowAgentPanel(true);
-            setAgentStepStatus(prev => {
-              const next = { ...prev } as any;
-              if (toolName in next) {
-                next[toolName as AgentKey] = payload?.content?.success === true || payload?.success === true ? 'success' : 'processing';
+            setAgentPanels(prev => {
+              const next = [...prev];
+              let idx = next.findIndex(p => p.agentName === agentName);
+              if (idx === -1) {
+                next.push({ agentName, steps: [], statusMap: {}, queue: [] });
+                idx = next.length - 1;
+              }
+              if (toolName) {
+                const panel = { ...next[idx] };
+                const visible = panel.steps.some(s => s.key === toolName);
+                if (!visible) {
+                  panel.steps = [...panel.steps, { key: toolName, label: toolName }];
+                }
+                // 新的规则：只要收到对应的 tool_result，就标记为成功（对号）
+                panel.statusMap = { ...panel.statusMap, [toolName]: 'success' };
+                next[idx] = panel;
               }
               return next;
             });
           }
-        } catch {}
-        const hubEntries = Array.isArray(output?.hub_entries) ? output.hub_entries : [];
-        const pageType = output?.page_type || output?.pageType;
+          // 保存结果以供 View 展示（按 agent 分组）
+          resultData = payload?.result || payload?.payload?.result || output?.result || output || null;
+          if (agentName && toolName && resultData) {
+            setLastToolResults(prev => ({
+              ...prev,
+              [agentName]: { ...(prev[agentName] || {}), [toolName]: resultData }
+            }));
+          }
+        } catch { }
+        // 更健壮的 hub_entries 与 page_type 提取
+        let hubEntries: any[] = [];
+        let pageType: string | undefined = output?.page_type || output?.pageType;
+
+        const hubEntriesCandidates = [
+          (output as any)?.hub_entries,
+          (output as any)?.result?.hub_entries,
+          (payload as any)?.hub_entries,
+          (payload as any)?.payload?.hub_entries,
+          (payload as any)?.payload?.result?.hub_entries,
+          (payload as any)?.result?.hub_entries,
+          (resultData as any)?.hub_entries,
+        ];
+        for (const candidate of hubEntriesCandidates) {
+          if (Array.isArray(candidate) && candidate.length > 0) { hubEntries = candidate; break; }
+        }
+        if (hubEntries.length === 0) {
+          const altEntriesCandidates = [
+            (output as any)?.entries,
+            (output as any)?.result?.entries,
+            (resultData as any)?.entries,
+          ];
+          for (const candidate of altEntriesCandidates) {
+            if (Array.isArray(candidate) && candidate.length > 0) { hubEntries = candidate; break; }
+          }
+        }
+        if (!pageType) {
+          pageType = (output as any)?.result?.page_type
+            || (output as any)?.result?.pageType
+            || (resultData as any)?.page_type
+            || (resultData as any)?.pageType
+            || (payload as any)?.page_type
+            || (payload as any)?.pageType;
+        }
         // 捕获 markdown 文本
         const possibleMarkdown = output?.markdown || output?.final_markdown || payload?.payload?.markdown || payload?.markdown;
         if (typeof possibleMarkdown === 'string' && possibleMarkdown.trim().length > 0) {
           setLatestMarkdown(possibleMarkdown);
         }
+
+        // 处理生成的页面 HTML（pages_html -> page_html，支持流式分片）
+        try {
+          const pagesHtml = (output as any)?.pages_html || (resultData as any)?.pages_html || (payload as any)?.pages_html;
+          if (Array.isArray(pagesHtml)) {
+            for (const entry of pagesHtml) {
+              const resultId = entry?.result_id || entry?.id || `${Date.now()}`;
+              const title = entry?.title || resultId;
+              const pageHtml = entry?.page_html || entry?.html || '';
+              if (typeof pageHtml === 'string') {
+                aiQueueRef.current.push({ kind: 'html_chunk', resultId, title, chunk: pageHtml, replace: true });
+              } else if (Array.isArray(entry?.chunks)) {
+                for (const ch of entry.chunks) {
+                  const text = typeof ch === 'string' ? ch : (ch?.text || '');
+                  if (text) aiQueueRef.current.push({ kind: 'html_chunk', resultId, title, chunk: text });
+                }
+              }
+            }
+          }
+        } catch {}
         if (hubEntries.length > 0) {
           const count = hubEntries.length;
           // 在卡片前插入一条提示气泡
@@ -533,10 +1065,14 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   useEffect(() => {
     try {
       if (currentConversationId) {
-        // 4. 自动连接：建立WebSocket连接
+        // 优先回放历史记录以恢复界面渲染状态
+        (async () => {
+          try { await loadChatHistory(currentConversationId); } catch {}
+        })();
+
+        // 4. 自动连接：建立WebSocket连接（由下方组件控制）
         if (!wsConnected && wsConnectionState === 'CLOSED') {
-          // 这里会触发WebSocket连接建立
-          // WebSocket连接会在组件渲染时自动建立
+          // WebSocket 连接会在组件渲染时自动建立
         }
       }
     } catch (error: any) {
@@ -546,8 +1082,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   // 加载聊天历史记录并恢复渲染进度
   const loadChatHistory = async (conversationId: string) => {
     try {
-
-
       const resp = await apiClient.getAlternativeChatHistory(conversationId as any);
       const records = Array.isArray(resp?.data)
         ? resp.data
@@ -589,88 +1123,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
 
 
-
-
-
-  // 从URL中提取域名
-  const extractDomainFromUrl = (url: string): string => {
-    if (!url) return '';
-
-    try {
-      // 确保URL有协议
-      let fullUrl = url;
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        fullUrl = 'https://' + url;
-      }
-
-      const urlObj = new URL(fullUrl);
-      return urlObj.hostname.toLowerCase();
-    } catch (error) { return url.toLowerCase(); }
-  };
-
-  // 添加缺失的方法
-  const handleStartGenerationFromModal = async (data: any) => {
-    try {
-      setIsMessageSending(true);
-      setIsSubmitting(true);
-      // 优先走 WebSocket 实时流程（勾选时已发送固定ID触发生成）
-      if (webSocketRef.current && webSocketRef.current.isConnected) {
-        setCurrentStep(3);
-        startedTaskCountRef.current += (data?.hubPageIds?.length || 0);
-        messageHandler.addSystemMessage('System is analyzing competitors and generating pages, please wait...');
-        retryCountRef.current = 0;
-        setHubPageIds([]);
-        setSelectedCompetitors([]);
-        setUserInput('');
-        setIsProcessingTask(true);
-        return;
-      }
-
-      // 兜底：若当前无 WebSocket 连接，则使用 REST API 触发生成，并确保 websiteId 存在
-      let ensureConversationId = data?.conversationId || currentConversationId;
-      let ensureWebsiteId = data?.websiteId || currentWebsiteId;
-
-      try {
-        if (!ensureWebsiteId) {
-          const genIdResp = await apiClient.generateWebsiteId();
-          if (genIdResp?.code === 200) {
-            ensureWebsiteId = genIdResp?.data?.websiteId || ensureWebsiteId;
-            if (ensureWebsiteId) setCurrentWebsiteId(ensureWebsiteId);
-          }
-        }
-      } catch { }
-
-      const generateResponse = await apiClient.generateAlternative(
-        ensureConversationId,
-        data?.hubPageIds || hubPageIds,
-        ensureWebsiteId
-      );
-
-      if (
-        generateResponse?.code === 200 ||
-        generateResponse?.success === true ||
-        generateResponse?.status === 'success'
-      ) {
-        setCurrentStep(3);
-        startedTaskCountRef.current += (data?.hubPageIds?.length || hubPageIds.length);
-        messageHandler.addSystemMessage('System is analyzing competitors and generating pages, please wait...');
-        retryCountRef.current = 0;
-        setHubPageIds([]);
-        setSelectedCompetitors([]);
-        setUserInput('');
-        setIsProcessingTask(true);
-      } else {
-        const detail = typeof generateResponse === 'object' ? JSON.stringify(generateResponse) : String(generateResponse);
-        messageHandler.addSystemMessage(`⚠️ Failed to generate alternative pages: Invalid server response\n${detail}`);
-      }
-    } catch (error: any) {
-      messageHandler.addSystemMessage(`⚠️ Failed to process competitor selection: ${error.message}`);
-    } finally {
-      setIsMessageSending(false);
-      setIsSubmitting(false);
-    }
-  };
-
   // 对应老代码第2669-2911行的handleUserInput函数
   const handleUserInput = async (eOrString: any) => {
     if (isSubmitting) return;
@@ -709,56 +1161,24 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
       if (!tempConversationId) {
         setLoading(true);
-        // 用户发送第一条消息，API自动创建聊天室并返回WebSocket连接
+        // 用户发送第一条消息，API创建聊天室并返回 conversationId（不再直接返回 WebSocket）
         const chatResponse = await apiClient.chatWithAI(getPageMode(), formattedInput, null);
 
-        // 检查响应格式 - 可能返回WebSocket对象或包含conversationId的对象
-        if (chatResponse && 'websocket' in chatResponse) {
+        if (chatResponse && (chatResponse as any).conversationId) {
+          tempConversationId = (chatResponse as any).conversationId as string;
+          setCurrentConversationId(tempConversationId);
 
-
-          // 检查API响应中是否包含conversationId
-          if (chatResponse.conversationId) {
-            tempConversationId = chatResponse.conversationId;
-            setCurrentConversationId(tempConversationId);
-
-            // 实时更新URL
-            const currentPath = window.location.pathname;
-            let targetPath = '/alternative';
-            if (currentPath.includes('best')) {
-              targetPath = '/best';
-            } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
-              targetPath = '/FAQ';
-            } else if (currentPath.includes('alternative')) {
-              targetPath = '/alternative';
-            }
-            router.replace(`${targetPath}?conversationId=${tempConversationId}`);
-          } else {
-
-            // 等待WebSocket消息中的conversationId
-            const websocket = chatResponse.websocket;
-            websocket.onmessage = (event) => {
-              try {
-                const data = JSON.parse(event.data);
-
-
-                if (data.conversationId) {
-                  setCurrentConversationId(data.conversationId);
-
-                  // 实时更新URL
-                  const currentPath = window.location.pathname;
-                  let targetPath = '/alternative';
-                  if (currentPath.includes('best')) {
-                    targetPath = '/best';
-                  } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
-                    targetPath = '/FAQ';
-                  } else if (currentPath.includes('alternative')) {
-                    targetPath = '/alternative';
-                  }
-                  router.replace(`${targetPath}?conversationId=${data.conversationId}`);
-                }
-              } catch (error) { }
-            };
+          // 实时更新URL
+          const currentPath = window.location.pathname;
+          let targetPath = '/alternative';
+          if (currentPath.includes('best')) {
+            targetPath = '/best';
+          } else if (currentPath.includes('faq') || currentPath.includes('FAQ')) {
+            targetPath = '/FAQ';
+          } else if (currentPath.includes('alternative')) {
+            targetPath = '/alternative';
           }
+          router.replace(`${targetPath}?conversationId=${tempConversationId}`);
         } else {
           messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
           setIsMessageSending(false);
@@ -804,170 +1224,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const renderChatMessage = (message: any, index: number) => {
     // 处理域名信息消息
 
-    if (message.type === 'codes-completion') {
-      return (
-        <div
-          key={message.id || `codes-completion-${index}`}
-          className="flex justify-start mb-4"
-          style={{ animation: 'fadeIn 0.5s ease-out forwards' }}
-        >
-          <div className="w-full flex flex-col items-start">
-            <div className="relative w-full">
-              <div
-                className="px-4 py-3 w-full hover:shadow-slate-500/20 transition-all duration-300 transform hover:-translate-y-0.5"
-                style={{
-                  borderRadius: '12px',
-                  border: isHydrated ? themeStyles.successMessage?.border : '1px solid rgba(34, 197, 94, 0.2)',
-                  background: isHydrated ? themeStyles.successMessage?.background : 'rgba(34, 197, 94, 0.1)',
-                }}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    {/* 成功图标 */}
-                    <div className={`flex-shrink-0 w-6 h-6 rounded-full ${isHydrated ? themeStyles.successMessage?.iconBackground : 'bg-green-500'} flex items-center justify-center`}>
-                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-
-                    {/* 消息内容 */}
-                    <span className={`${isHydrated ? themeStyles.successMessage?.text : 'text-green-300'} font-medium text-sm`}>
-                      {message.content}
-                    </span>
-                  </div>
-
-                  {/* View按钮 */}
-                  <button
-                    onClick={() => {
-                      if (!isBrowserSidebarOpen) {
-                        setIsBrowserSidebarOpen(true);
-                      }
-                      setApiDetailModal({
-                        visible: true,
-                        data: message
-                      });
-                    }}
-                    className="px-3 py-1.5 transition-colors duration-150 flex-shrink-0 text-xs font-medium"
-                    style={{
-                      borderRadius: '6px',
-                      background: isHydrated ? themeStyles.successMessage?.buttonBackground : 'rgba(34, 197, 94, 0.2)',
-                      border: 'none',
-                      color: isHydrated ? themeStyles.successMessage?.buttonText : 'rgba(34, 197, 94, 0.8)',
-                    }}
-                    onMouseEnter={(e) => {
-                      const target = e.target as HTMLElement;
-                      target.style.background = isHydrated ? themeStyles.successMessage?.buttonHoverBackground : 'rgba(34, 197, 94, 0.3)';
-                      target.style.color = isHydrated ? themeStyles.successMessage?.buttonHoverText : 'rgba(34, 197, 94, 1)';
-                    }}
-                    onMouseLeave={(e) => {
-                      const target = e.target as HTMLElement;
-                      target.style.background = isHydrated ? themeStyles.successMessage?.buttonBackground : 'rgba(34, 197, 94, 0.2)';
-                      target.style.color = isHydrated ? themeStyles.successMessage?.buttonText : 'rgba(34, 197, 94, 0.8)';
-                    }}
-                  >
-                    View Code
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1 ml-2">
-              {new Date(message.timestamp || Date.now()).toLocaleString()}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (message.type === 'sitemap-button') {
-      return (
-        <div key={message.id || index} className="flex justify-center mb-8">
-          <button
-            className={`group relative px-8 py-4 ${isHydrated ? `${themeStyles.sitemapButton?.backgroundClass} ${themeStyles.sitemapButton?.hoverBackgroundClass}` : 'bg-gradient-to-r from-blue-600/90 via-indigo-600/90 to-blue-700/90 hover:from-blue-500/95 hover:via-indigo-500/95 hover:to-blue-600/95'} 
-                       ${isHydrated ? themeStyles.sitemapButton?.text : 'text-white'} font-bold text-base rounded-xl 
-                       ${isHydrated ? themeStyles.sitemapButton?.shadow : 'shadow-xl hover:shadow-2xl hover:shadow-blue-500/25'} 
-                       transition-all duration-300 
-                       transform hover:scale-105 hover:-translate-y-1 
-                       backdrop-blur-sm overflow-hidden
-                       animate-pulse hover:animate-none`}
-            style={{
-              background: isHydrated ? themeStyles.sitemapButton?.background : 'linear-gradient(285.22deg, rgba(59, 130, 246, 0.15) 44.35%, rgba(150, 56, 7, 0.8) 92.26%)'
-            }}
-            onClick={() => {
-              if (browserTabs.length >= 10) {
-                messageApi.info('You have reached the maximum number of pages. Please start a new task to get started.');
-                return;
-              }
-              if (isProcessingTask) {
-                messageApi.info('A task is currently in progress. Please wait and try again later.');
-                return;
-              }
-              if (typeof message.onGenerate === 'function') {
-                message.onGenerate();
-              }
-            }}
-          >
-            {/* 背景动画效果 */}
-            <div className={`absolute inset-0 ${isHydrated && themeStyles.sitemapButton?.background?.includes('purple') ? 'bg-gradient-to-r from-purple-400/20 via-blue-400/20 to-purple-400/20' : 'bg-gradient-to-r from-blue-400/20 via-indigo-400/20 to-blue-400/20'} 
-                            opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
-
-            {/* 光泽效果 */}
-            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-transparent via-white/10 to-transparent 
-                            opacity-0 group-hover:opacity-100 transition-opacity duration-300 
-                            translate-x-[-100%] group-hover:translate-x-[100%] 
-                            transform transition-transform duration-700"></div>
-
-            <div className="relative z-10 flex items-center gap-3">
-              <span className="text-xl animate-bounce">🗺️</span>
-              <div className="flex flex-col items-start">
-                <span className="tracking-wide leading-tight">Get Your Custom Sitemap Plan</span>
-                <span className="text-sm opacity-90 font-medium">Click to get more quality pages hints ✨</span>
-              </div>
-              <svg className="w-5 h-5 transition-transform duration-300 group-hover:translate-x-1"
-                fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M13 7l5 5m0 0l-5 5m5-5H6" />
-              </svg>
-            </div>
-
-            {/* 底部光效 */}
-            <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-3/4 h-px 
-                            ${isHydrated && themeStyles.sitemapButton?.background?.includes('purple') ? 'bg-gradient-to-r from-transparent via-purple-300 to-transparent' : 'bg-gradient-to-r from-transparent via-blue-300 to-transparent'} 
-                            opacity-60 group-hover:opacity-100 transition-opacity duration-300`}></div>
-          </button>
-        </div>
-      );
-    }
-
-    if (message.type === 'confirm-button') {
-      return (
-        <div key={message.id || index} className="flex justify-center mb-6">
-          <button
-            className="group relative px-6 py-2.5 bg-gradient-to-r from-blue-600 via-blue-600 to-purple-600 
-                     hover:from-blue-500 hover:via-blue-500 hover:to-purple-500 
-                     text-white font-semibold text-sm rounded-lg shadow-lg 
-                     hover:shadow-blue-500/25 transition-all duration-300 
-                     transform hover:scale-105 hover:-translate-y-0.5 
-                     border border-blue-500/50 hover:border-blue-400/70
-                     backdrop-blur-sm overflow-hidden"
-            onClick={() => {
-              if (typeof message.onConfirm === 'function') {
-                message.onConfirm();
-              }
-            }}
-          >
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-400/10 to-purple-400/10 
-                            opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            <div className="relative z-10 flex items-center gap-2">
-              <span className="text-sm">👆</span>
-              <span className="tracking-wide">If you confirm, click here!</span>
-              <span className="text-sm">✨</span>
-            </div>
-            <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-transparent via-white/5 to-transparent 
-                            opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-          </button>
-        </div>
-      );
-    }
 
     // 系统消息渲染
     if (message.source === 'system') {
@@ -980,8 +1236,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           <div className="max-w-[80%] w-full flex flex-col items-start">
             <div className="relative">
               <div
-                className={`p-4 rounded-2xl text-sm ${isHydrated ? themeStyles.systemMessage?.background : 'bg-slate-800/80'} ${isHydrated ? themeStyles.systemMessage?.text : 'text-white'} ${isHydrated ? themeStyles.systemMessage?.shadow : 'shadow-xl'} backdrop-blur-sm
-                         border ${isHydrated ? themeStyles.systemMessage?.border : 'border-slate-600/40'} rounded-tl-none
+                className={`p-4 rounded-2xl text-sm ${isHydrated ? themeStyles.systemMessage?.background : (currentTheme === 'dark' ? 'bg-slate-800/80' : 'bg-slate-100')} ${isHydrated ? themeStyles.systemMessage?.text : (currentTheme === 'dark' ? 'text-white' : 'text-black')} ${isHydrated ? themeStyles.systemMessage?.shadow : 'shadow-xl'} backdrop-blur-sm
+                         border ${isHydrated ? themeStyles.systemMessage?.border : (currentTheme === 'dark' ? 'border-slate-600/40' : 'border-slate-200')} rounded-tl-none
                          ${isHydrated ? themeStyles.systemMessage?.hoverShadow : 'hover:shadow-slate-500/20'} transition-all duration-300 transform hover:-translate-y-0.5`}
                 style={{
                   maxWidth: '800px',
@@ -999,7 +1255,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                   </span>
                 </div>
               </div>
-              <div className={`absolute -left-1 top-0 w-2 h-2 ${isHydrated ? themeStyles.systemMessage?.background : 'bg-slate-800/80'} transform rotate-45`}></div>
+              <div className={`absolute -left-1 top-0 w-2 h-2 ${isHydrated ? themeStyles.systemMessage?.background : (currentTheme === 'dark' ? 'bg-slate-800/80' : 'bg-slate-100')} transform rotate-45`}></div>
             </div>
             <div className={`text-[10px] ${isHydrated ? themeStyles.systemMessage?.timestampColor : 'text-slate-400'} mt-1 ml-2`}>
               {new Date(message.timestamp).toLocaleString()}
@@ -1056,18 +1312,32 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     }
 
     if (message.type === 'pages-grid') {
+      const remainingPages = (message.pages || []).filter((p: any) => !submittedHubIds.has(p.hubPageId));
+      const remainingCount = remainingPages.length;
+      const shouldHide = hideRemainingCards && remainingCount > 0;
       return (
         <div key={`${index}-pages`} className="flex justify-start mb-4" style={{ animation: 'fadeIn 0.5s ease-out forwards' }}>
           <div className="max-w-[95%] w-full">
-            {/* Title section - more compact */}
-            <div className={`mb-2 text-2xs font-medium pl-3 py-1 rounded-r-md ${isHydrated ? `${themeStyles.pagesGrid?.title?.text} ${themeStyles.pagesGrid?.title?.background} ${themeStyles.pagesGrid?.title?.border}` : 'text-slate-300 bg-slate-800/20 border-l-2 border-slate-500'
-              }`}>
-              Found <span className={`font-bold ${isHydrated ? themeStyles.pagesGrid?.title?.highlight : 'text-slate-200'}`}>{message.pages.length}</span> potential {message.pageType ? `${message.pageType} ` : ""}content pages
-            </div>
+            {/* 显示/隐藏剩余卡片的控制按钮 */}
+            {remainingCount > 0 && (
+              <div className="flex justify-end mb-1">
+                <button
+                  className="text-xs px-2 py-1 rounded hover:opacity-80"
+                  onClick={() => setHideRemainingCards(v => !v)}
+                  style={{
+                    background: isHydrated ? themeStyles.pagesGrid?.viewButton?.background : 'rgba(148,163,184,0.15)',
+                    color: isHydrated ? themeStyles.pagesGrid?.viewButton?.text : '#CBD5E1',
+                    borderRadius: isHydrated ? themeStyles.pagesGrid?.viewButton?.borderRadius : '8px'
+                  }}
+                >
+                  {hideRemainingCards ? 'Show remaining cards' : 'Hide remaining cards'}
+                </button>
+              </div>
+            )}
 
             {/* More compact list layout */}
-            <div className="flex flex-col gap-1.5">
-              {message.pages.map((page: any, idx: number) => (
+            <div className="flex flex-col gap-1.5" style={{ display: shouldHide ? 'none' : undefined }}>
+              {remainingPages.map((page: any, idx: number) => (
                 <div
                   key={page.hubPageId || `page-${idx}`}
                   className="group transition-all duration-200 hover:shadow-lg"
@@ -1324,85 +1594,37 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       const filteredContent = linkifyDomains(
         filterMessageTags(rawContent).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
       );
-      const elements = [];
 
-      // 1. Agent消息本身
-      elements.push(
-        <div key={index} className="flex flex-col justify-start mb-6" style={{ animation: 'fadeIn 0.5s ease-out forwards' }}>
-          <div className="flex max-w-[80%] flex-row group">
-            <div className="flex-shrink-0" style={{ animation: 'bounceIn 0.6s ease-out forwards' }}>
-            </div>
-            <div className="relative w-full">
-              <div
-                className={`px-4 py-3 w-full rounded-xl border ${isHydrated ? themeStyles.systemMessage?.background : 'bg-slate-800/60'
-                  } ${isHydrated ? themeStyles.systemMessage?.border : 'border-slate-600/40'}`}
-                style={{ maxWidth: '800px' }}
-              >
-                <div className={`text-sm ${isHydrated ? themeStyles.agentMessage?.text : 'text-white'}`} style={{ wordWrap: 'break-word' }}>
-                  <div className="relative z-10">
-                    {
-                      <div>
-                        <div className="flex items-start gap-2">
-                          <button
-                            onClick={() => setMessageCollapsed(prev => ({ ...prev, [index]: !prev[index] }))}
-                            className="text-slate-400 hover:text-slate-300 transition-colors flex-shrink-0 mt-1"
-                          >
-                          </button>
-                          <div className="relative">
-                            <div className={`${messageCollapsed[index] ?? true ? 'line-clamp-6' : ''}`}>
-                              <span dangerouslySetInnerHTML={{ __html: filteredContent.split('\n').join('<br />') }} />
-                            </div>
-                            {(messageCollapsed[index] ?? true) && filteredContent && filteredContent.split('\n').length > 6 && (
-                              <div className={`absolute bottom-0 left-0 right-0 h-16 pointer-events-none ${isHydrated ? `${themeStyles.messageCollapse?.gradientOverlay} ${themeStyles.messageCollapse?.borderRadius}` : 'bg-gradient-to-b from-transparent to-slate-800/90 rounded-lg'
-                                }`} />
-                            )}
-                          </div>
-                        </div>
-                        {filteredContent && filteredContent.split('\n').length > 3 && (
-                          <div
-                            className="mt-3 text-xs text-slate-400 text-center cursor-pointer hover:text-slate-300 flex items-center justify-center gap-1"
-                            onClick={() => {
-                              setMessageCollapsed(prev => ({
-                                ...prev,
-                                [index]: !(prev[index] ?? true)
-                              }));
-                            }}
-                          >
-                            {messageCollapsed[index] ?? true ? (
-                              <>
-                                <span>Show More</span>
-                                <DownOutlined className="text-xs" />
-                              </>
-                            ) : (
-                              <>
-                                <span>Show Less</span>
-                                <UpOutlined className="text-xs" />
-                              </>
-                            )}
-                          </div>
-                        )}
-
-                        {message.showLoading && (
-                          <div className="inline-flex items-center ml-2 mt-1">
-                            <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></div>
-                            <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce ml-1" style={{ animationDelay: '0.2s' }}></div>
-                            <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce ml-1" style={{ animationDelay: '0.4s' }}></div>
-                          </div>
-                        )}
-                      </div>
-                    }
-                  </div>
+      // 使用与用户消息一致的样式（左侧对齐）
+      return (
+        <div
+          key={index}
+          className="flex justify-start mb-6"
+          style={{ animation: 'fadeIn 0.5s ease-out forwards' }}
+        >
+          <div className="flex max-w-[80%] flex-col items-start">
+            <div className="relative">
+              <div className={`p-4 text-sm backdrop-blur-sm
+                transition-all duration-500
+                transform hover:-translate-y-1 hover:scale-[1.02]
+                ${isHydrated ? themeStyles.userMessage?.text : (currentTheme === 'dark' ? 'text-white' : 'text-black')}
+                ${isHydrated ? themeStyles.userMessage?.background : (currentTheme === 'dark' ? 'bg-white/10' : 'bg-slate-100')}
+                relative overflow-hidden rounded-xl`}
+                style={{
+                  maxWidth: '350px',
+                  wordWrap: 'break-word'
+                }}>
+                <div className="relative z-10">
+                  <span dangerouslySetInnerHTML={{ __html: filteredContent.split('\n').join('<br />') }} />
                 </div>
               </div>
-              {/* 去掉小三角形 */}
             </div>
-          </div>
-          <div className="text-[10px] text-slate-400 mt-1 ml-2">
-            {new Date(message.timestamp).toLocaleString()}
+            <div className={`text-[10px] mt-1 ml-2 ${isHydrated ? (currentTheme === 'dark' ? 'text-slate-400' : 'text-gray-500') : 'text-slate-400'}`}>
+              {new Date(message.timestamp).toLocaleString()}
+            </div>
           </div>
         </div>
       );
-      return elements;
     }
   };
 
@@ -1427,6 +1649,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat'
         }}>
+        <style jsx>{`
+          @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        `}</style>
 
         <div className={`relative z-10 w-full flex ${isMobile ? 'flex-col' : 'flex-row'} gap-6 h-[calc(100vh-140px)] px-4 text-sm ${isEntryPage ? 'justify-center' : ''}`}>
           <div className={`${isMobile
@@ -1541,8 +1766,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 borderRadius: isHydrated ? (themeStyles.inputArea?.borderRadius || '16px') : '16px',
                                 background: isHydrated ? (currentTheme === 'dark' ? (themeStyles.inputArea?.background || '#0B1421') : '#FFFFFF') : 'transparent',
                                 boxShadow: isHydrated ? (currentTheme === 'dark' ? (themeStyles.inputArea?.boxShadow || '0px 4px 16px 0px rgba(255, 255, 255, 0.08)') : '0px 4px 16px 0px rgba(0, 0, 0, 0.08)') : '0 2px 16px 0 rgba(30,41,59,0.08)',
-                              backdropFilter: 'blur(2px)',
-                              position: 'relative',
+                                backdropFilter: 'blur(2px)',
+                                position: 'relative',
                               }}
                             >
                               {/* 渐变边框 */}
@@ -1585,31 +1810,39 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                   )}
                 </div>
               )}
-              {/* 渲染消息，同时在首个用户消息之后插入 Agent Processing 面板 */}
-              {(() => {
-                let inserted = false;
-                return combinedMessages.flatMap((message, index) => {
-                  const nodes: any[] = [];
-                  const msgNode = renderChatMessage(message, index);
-                  if (msgNode) nodes.push(msgNode);
-                  if (!inserted && showAgentPanel && message?.source === 'user') {
-                    nodes.push(
-                      <div key={`agent-panel-after-${index}`} className="mb-4 animate-slideUp">
-                        <AgentProcessingPanel
-                          steps={AGENT_STEPS as any}
-                          statusMap={agentStepStatus as any}
-                          themeStyles={themeStyles}
-                          isHydrated={isHydrated}
-                          isExpanded={isAgentPanelExpanded}
-                          onToggle={() => setIsAgentPanelExpanded(!isAgentPanelExpanded)}
-                        />
-                      </div>
-                    );
-                    inserted = true;
-                  }
-                  return nodes;
-                });
-              })()}
+              {/* 严格按照 seq 顺序渲染消息（队列中包含 agent-panel 占位） */}
+              {combinedMessages.map((message, index) => {
+                if (message.type === 'agent-panel') {
+                  if (!showAgentPanel || agentPanels.length === 0) return null;
+                  return (
+                    <div key={`agent-panels-after-${index}`} className="mb-4 space-y-3">
+                      {agentPanels.map((panel, i) => (
+                        <div
+                          key={panel.agentName}
+                          className="animate-slideUp"
+                          style={{ animation: 'slideUp 0.4s ease-out forwards', animationDelay: `${i * 80}ms` }}
+                        >
+                          <AgentProcessingPanel
+                            title={panel.agentName || 'Agent Processing'}
+                            steps={panel.steps as any}
+                            statusMap={panel.statusMap as any}
+                            themeStyles={themeStyles}
+                            isHydrated={isHydrated}
+                            isExpanded={agentPanelExpandedMap[panel.agentName] ?? true}
+                            onToggle={() => setAgentPanelExpandedMap(prev => ({ ...prev, [panel.agentName]: !(prev[panel.agentName] ?? true) }))}
+                            onViewStep={(stepKey: string) => {
+                              const content = (lastToolResults[panel.agentName] || {})[stepKey];
+                              setRightPanelTab('browser');
+                              setRightOverlay({ visible: true, title: `${panel.agentName} · ${stepKey}`, content });
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
+                return renderChatMessage(message, index);
+              })}
               <div ref={chatEndRef} />
             </div>
 
@@ -1692,38 +1925,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 pointerEvents: 'none',
                               }}
                             />
-                            {selectedCompetitors.length > 0 && (
-                              <div className="mb-3 flex flex-wrap gap-2">
-                                {selectedCompetitors.map((competitor) => (
-                                  <div
-                                    key={competitor.hubPageId}
-                                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600/20 border border-blue-500/30 rounded-lg text-xs text-blue-300 transition-all duration-200 hover:bg-blue-600/30"
-                                  >
-                                    <div className="flex items-center gap-2">
-                                      {competitor.logo && (
-                                        <img
-                                          src={competitor.logo}
-                                          alt={competitor.pageTitle || 'Competitor'}
-                                          className="w-4 h-4 rounded-full object-cover"
-                                        />
-                                      )}
-                                      <span className="font-medium">
-                                        {competitor.pageTitle || 'Unknown'}
-                                      </span>
-                                    </div>
-                                    <button
-                                      onClick={() => removeCompetitor(competitor.hubPageId)}
-                                      className="ml-1 text-blue-400 hover:text-blue-200 transition-colors"
-                                      title="Remove competitor"
-                                    >
-                                      <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
-                                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                                      </svg>
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                            {/* Removed selected competitors chips display */}
                             <ChatInput
                               userInput={userInput}
                               setUserInput={(value) => {
@@ -1733,7 +1935,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 }
                               }}
                               onSendMessage={handleUserInput}
-                              onStartGeneration={handleStartGenerationFromModal}
                               loading={loading}
                               isMessageSending={isMessageSending}
                               isProcessingTask={isProcessingTask}
@@ -1757,6 +1958,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 // 这里可以添加额外的域名处理逻辑
                               }}
                               variant="bare"
+                              onStartGeneration={handleStartGeneration}
                             />
 
                           </div>
@@ -1809,7 +2011,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
                 <div className="flex-1">
                   {rightPanelTab === 'browser' && (
-                    <div className="space-y-2">
+                    <div className="space-y-2 relative h-full">
                       {typeof latestMarkdown === 'string' && latestMarkdown.trim().length > 0 && (
                         <div className="px-3 pt-3">
                           <div
@@ -1826,6 +2028,44 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                           </div>
                         </div>
                       )}
+                      {/* 右侧覆盖层：展示 View 的结果数据 */}
+                      {rightOverlay.visible && (
+                        <div className="absolute inset-0 z-10 p-3">
+                          <div
+                            className="w-full h-full rounded-lg shadow-lg overflow-auto"
+                            style={{
+                              border: currentTheme === 'dark' ? '1px solid rgba(255, 255, 255, 0.16)' : '1px solid rgba(0, 0, 0, 0.12)',
+                              background: currentTheme === 'dark' ? '#0B1421' : '#F8FAFC',
+                              color: currentTheme === 'dark' ? '#E5E7EB' : '#111827'
+                            }}
+                          >
+                            <div className="sticky top-0 z-20 flex items-center justify-between px-3 py-2"
+                              style={{
+                                background: currentTheme === 'dark' ? 'rgba(11, 20, 33, 0.95)' : 'rgba(248, 250, 252, 0.95)',
+                                borderBottom: currentTheme === 'dark' ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)'
+                              }}
+                            >
+                              <div className="text-sm font-medium truncate pr-3">{rightOverlay.title}</div>
+                              <button
+                                className="text-xs px-2 py-1 rounded hover:opacity-80"
+                                style={{
+                                  background: currentTheme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+                                  color: currentTheme === 'dark' ? '#E5E7EB' : '#111827'
+                                }}
+                                onClick={() => setRightOverlay({ visible: false })}
+                              >
+                                Close
+                              </button>
+                            </div>
+                            <div className="px-3 pb-4 pt-2">
+                              <pre className="text-[12px] leading-5 whitespace-pre-wrap break-words">
+{typeof rightOverlay.content === 'string' ? rightOverlay.content : JSON.stringify(rightOverlay.content, null, 2)}
+                              </pre>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {browserTabs.length === 0 ? (
                         <div className="flex-1 overflow-y-auto overflow-y-hidden p-3 h-[calc(100vh-400px)]">
                           <div className="flex items-center justify-center h-full">

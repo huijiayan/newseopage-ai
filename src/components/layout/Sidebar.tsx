@@ -422,20 +422,20 @@ const SidebarContent = () => {
                 }`}
               >
                 {/* 背景装饰 */}
-                <div className={`absolute inset-0 bg-gradient-to-br from-purple-400/10 to-indigo-400/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${
-                  pathname === '/pages-publishment' ? 'opacity-20' : ''
+                  <div className={`absolute inset-0 bg-gradient-to-br from-purple-400/10 to-indigo-400/10 ${
+                  pathname === '/pages-publishment' ? 'opacity-20' : 'opacity-0'
                 }`}></div>
                 
                 {/* 图标容器 */}
-                <div className={`relative w-7 h-7 flex items-center justify-center mr-3 rounded-xl ${
+                  <div className={`relative w-7 h-7 flex items-center justify-center mr-3 rounded-xl ${
                   pathname === '/pages-publishment' 
                     ? 'bg-white/20 backdrop-blur-sm' 
-                    : 'bg-purple-100 dark:bg-purple-900/30 group-hover:bg-purple-200 dark:group-hover:bg-purple-800/40'
+                    : 'bg-purple-100 dark:bg-purple-900/30'
                 }`}>
-                  <svg viewBox="0 0 24 24" fill="none" className={`w-4 h-4 transition-colors ${
+                  <svg viewBox="0 0 24 24" fill="none" className={`w-4 h-4 ${
                     pathname === '/pages-publishment' 
                       ? 'text-white' 
-                      : 'text-purple-600 dark:text-purple-400 group-hover:text-purple-700 dark:group-hover:text-purple-300'
+                      : 'text-purple-600 dark:text-purple-400'
                   }`}>
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
@@ -443,24 +443,24 @@ const SidebarContent = () => {
                 
                 {/* 文字内容 */}
                 <div className="relative flex-1">
-                  <span className={`text-sm font-semibold transition-colors ${
+                  <span className={`text-sm font-semibold ${
                     pathname === '/pages-publishment' 
                       ? 'text-white' 
-                      : 'text-gray-800 dark:text-gray-200 group-hover:text-purple-700 dark:group-hover:text-purple-300'
+                      : 'text-gray-800 dark:text-gray-200'
                   }`}>
                     Pages Publishment
                   </span>
                 </div>
                 
                 {/* 状态指示器 */}
-                <div className={`relative w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+                <div className={`relative w-2.5 h-2.5 rounded-full ${
                   pathname === '/pages-publishment' 
                     ? 'bg-white shadow-sm' 
-                    : 'bg-purple-400 dark:bg-purple-500 group-hover:scale-125'
+                    : 'bg-purple-400 dark:bg-purple-500'
                 }`}></div>
                 
                 {/* 悬停时的光效 */}
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 transform -skew-x-12"></div>
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0"></div>
               </Link>
             </div>
           )}
@@ -475,36 +475,32 @@ const SidebarContent = () => {
                 <Link
                   key={item.label}
                   href={item.href}
-                  className={`group relative flex items-center p-3 rounded-2xl transition-all duration-300 overflow-hidden ${
+                  className={`group relative flex items-center p-3 rounded-2xl transition-all duration-300 ${
                     isActive 
-                      ? 'bg-gray-900 dark:bg-gray-100 text-white dark:text-black shadow-xl' 
-                      : 'text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                      ? 'bg-white dark:bg-gray-700 text-black dark:text-white border border-gray-200 dark:border-gray-600 shadow-lg' 
+                      : 'bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-300 hover:shadow-md border border-transparent'
                   }`}
                 >
                   {/* 背景装饰 */}
-                  <div className={`absolute inset-0 bg-gradient-to-br from-gray-900/5 to-gray-900/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${
-                    isActive ? 'opacity-10' : ''
+                  <div className={`absolute inset-0 bg-gradient-to-br from-gray-900/5 to-gray-900/5 ${
+                    isActive ? 'opacity-0' : 'opacity-0'
                   }`}></div>
                   
                   <div className="flex items-center w-full relative">
-                    <div className={`w-7 h-7 flex items-center justify-center mr-3 rounded-xl ${
-                      isActive 
-                        ? 'bg-white/20 dark:bg-black/20' 
-                        : 'bg-gray-100 dark:bg-gray-700 group-hover:bg-gray-200 dark:group-hover:bg-gray-600'
-                    }`}>
+                  <div className={`w-7 h-7 flex items-center justify-center mr-3 rounded-xl ${isActive ? 'bg-white dark:bg-gray-600' : 'bg-white dark:bg-gray-700'}`}>
                       {item.label === 'Alternative Page' ? (
-                        <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4">
+                        <svg viewBox="0 0 24 24" fill="none" className={`w-4 h-4 ${isActive ? 'text-black dark:text-white' : 'text-gray-400 dark:text-gray-300'}`}>
                           <path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" 
                             stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
                       ) : (
-                        <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4">
+                        <svg viewBox="0 0 24 24" fill="none" className={`w-4 h-4 ${isActive ? 'text-black dark:text-white' : 'text-gray-400 dark:text-gray-300'}`}>
                           <path d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" 
                             stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
                       )}
                     </div>
-                    <span className="text-sm font-semibold">
+                    <span className={`text-sm font-semibold ${isActive ? 'text-black dark:text-white' : 'text-gray-400 dark:text-gray-300'}`}>
                       {item.label}
                     </span>
                   </div>

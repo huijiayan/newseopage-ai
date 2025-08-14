@@ -7,6 +7,7 @@ export interface ConversationMessage {
   content: string;
   timestamp?: string;
   createdAt?: string;
+  seq?: number;
   type?: string;
   isThinking?: boolean;
   showLoading?: boolean;
@@ -303,14 +304,16 @@ export const TAG_FILTERS = {
 // 对应老代码中的任务时间估算
 export const TASK_TIME_ESTIMATES = {
   0: { name: 'Waiting for input of URL', time: 'please make your input', tip: "Please input the url like seopage.ai"},
-  1: { name: "competitor_retriever", time: "1-3 mins", tip: "Fetching competitor data" },
-  2: { name: "competitor_validator", time: "1-2 mins", tip: "Validating inputs" },
-  3: { name: "generate_sitemap_planning", time: "2-3 mins", tip: "Planning sitemap" },
+  1: { name: "Find Competitors", time: "1-3 mins", tip: "Fetching competitor data" },
+  2: { name:  "Select Competitor", time: "1-2 mins", tip: "Validating inputs" },
+  3: { name: "Analyze Competitor", time: "3-5 mins", tip: "Planning sitemap" },
+  4: { name: "Page Generation", time: "2-3 mins", tip: "Planning sitemap" },
 } as const;
 
 // 对应老代码中的默认任务步骤
 export const DEFAULT_TASK_STEPS: TaskStep[] = [
-  { id: 1, name: "competitor_retriever", gradient: "from-blue-500/40 to-cyan-500/40", borderColor: "border-blue-500/60", shadowColor: "shadow-blue-500/20" },
-  { id: 2, name: "competitor_validator", gradient: "from-cyan-500/40 to-teal-500/40", borderColor: "border-cyan-500/60", shadowColor: "shadow-cyan-500/20" },
-  { id: 3, name: "generate_sitemap_planning", gradient: "from-teal-500/40 to-green-500/40", borderColor: "border-teal-500/60", shadowColor: "shadow-teal-500/20" },
+  { id: 1, name: "Find Competitors", gradient: "from-blue-500/40 to-cyan-500/40", borderColor: "border-blue-500/60", shadowColor: "shadow-blue-500/20" },
+  { id: 2, name: "Select Competitor", gradient: "from-cyan-500/40 to-teal-500/40", borderColor: "border-cyan-500/60", shadowColor: "shadow-cyan-500/20" },
+  { id: 3, name: "Analyze Competitor", gradient: "from-teal-500/40 to-green-500/40", borderColor: "border-teal-500/60", shadowColor: "shadow-teal-500/20" },
+  { id: 3, name: "Page Generation", gradient: "from-teal-500/40 to-green-500/40", borderColor: "border-teal-500/60", shadowColor: "shadow-teal-500/20" },
 ];

@@ -11,10 +11,6 @@ interface ApiClient extends AxiosInstance {
   googleCallback: typeof googleCallback;
   getAlternativeStatus: typeof getAlternativeStatus;
   searchCompetitor: typeof searchCompetitor;
-  generateAlternative: typeof generateAlternative;
-  getAlternativeDetail: typeof getAlternativeDetail;
-  getAlternativeSources: typeof getAlternativeSources;
-  getAlternativeResult: typeof getAlternativeResult;
   chatWithAI: typeof chatWithAI;
   changeStyle: typeof changeStyle;
   getAlternativeWebsiteList: typeof getAlternativeWebsiteList;
@@ -23,7 +19,6 @@ interface ApiClient extends AxiosInstance {
   getAlternativeChatHistory: typeof getAlternativeChatHistory;
   googleOneTapLogin: typeof googleOneTapLogin;
   deletePage: typeof deletePage;
-  generateWebsiteId: typeof generateWebsiteId;
   getAlternativeWebsiteResultList: typeof getAlternativeWebsiteResultList;
   getProductsByCustomerId: typeof getProductsByCustomerId;
   getSubfolders: typeof getSubfolders;
@@ -104,7 +99,7 @@ const getEnvironmentConfig = () => {
     // 测试环境域名
     if (hostname.includes('localhost') || hostname.includes('127.0.0.1') || hostname.includes('test')) {
       return {
-        apiUrl: 'https://api.websitelm.com/v1',
+        apiUrl: 'https://api.zhuyuejoey.com/v1',
         chatApiUrl: 'https://agents.zhuyuejoey.com',
         chatWsUrl: 'wss://agents.zhuyuejoey.com'
       };
@@ -122,7 +117,7 @@ const getEnvironmentConfig = () => {
 
   // 默认使用测试环境
   return {
-    apiUrl: 'https://api.websitelm.com/v1',
+    apiUrl: 'https://api.zhuyuejoey.com/v1',
     chatApiUrl: 'https://agents.zhuyuejoey.com',
     chatWsUrl: 'wss://agents.zhuyuejoey.com'
   };
@@ -344,67 +339,9 @@ const searchCompetitor = async (conversationId: any, website: any) => {
 
 
 
-// 生成替代方案
-const generateAlternative = async (conversationId: any, hubPageIds: any, websiteId: any) => {
-  try {
-    const response = await apiClient.post('/alternatively/generate', {
-      conversationId,
-      hubPageIds,
-      websiteId
-    });
-    const data = response.data;
-    // 统一返回结构：若后端未提供 code 字段，但请求成功（2xx），则补充 code: 200
-    if (data && typeof data === 'object' && 'code' in data) {
-      return data;
-    }
-    return { code: 200, data };
-  } catch (error) {
-    console.error('Failed to generate alternative:', error);
-    throw error;
-  }
-};
 
-// 获取竞品分析详情
-const getAlternativeDetail = async (websiteId: any, options: any = {}) => {
-  try {
-    const { planningId, page, limit } = options as any;
-    const params: any = {};
-    
-    if (planningId) params.planningId = planningId;
-    if (page !== undefined) params.page = page;
-    if (limit !== undefined) params.limit = limit;
-    
-    const response = await apiClient.get(`/alternatively/${websiteId}/detail`, { params });
-    return response.data;
-  } catch (error) {
-    console.error('Failed to get alternative details:', error);
-    throw error;
-  }
-};
 
-// 获取分析竞品的来源
-const getAlternativeSources = async (websiteId: any) => {
-  try {
-    const response = await apiClient.get(`/alternatively/${websiteId}/sources`);
-    return response.data;
-  } catch (error) {
-    console.error('Failed to get alternative sources:', error);
-    throw error;
-  }
-};
-
-// 获取竞品分析结果
-const getAlternativeResult = async (websiteId: any) => {
-  try {
-    const response = await apiClient.get(`/alternatively/${websiteId}/result`);
-    return response.data;
-  } catch (error) {
-    console.error('Failed to get alternative result:', error);
-    throw error;
-  }
-};
-
-// 创建新聊天 - 使用WebSocket流式响应
+// 创建新聊天 - 仅创建会话并返回 conversationId，由外部统一管理 WebSocket 连接
 const chatWithAI = async (chatType: any, message: any, conversationId: any, domain?: string, onMessage?: (data: any) => void) => {
   try {
     // 检查是否在客户端环境
@@ -419,7 +356,7 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, doma
       throw new Error('缺少访问令牌');
     }
     
-    // 先通过API获取conversationId，然后再建立WebSocket连接
+    // 先通过API获取conversationId，仅返回该ID，不在此处创建WebSocket
     try {
       const initialResponse = await chatApiClient.post('/api/chat/new', {
         chatType,
@@ -430,36 +367,12 @@ const chatWithAI = async (chatType: any, message: any, conversationId: any, doma
       
       // 检查响应中是否包含conversation_id（API返回的字段名）
       if (initialResponse.data && initialResponse.data.conversation_id) {
-        // 使用API返回的conversation_id建立WebSocket连接
         const realConversationId = initialResponse.data.conversation_id;
-        const wsUrl = `${CHAT_WS_URL}/ws/chat/${realConversationId}?token=${token}&domain=${encodeURIComponent(domain || '')}`;
-        
-        const websocket = new WebSocket(wsUrl);
-        
-        // 监听 WebSocket 消息
-        websocket.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            
-            if (onMessage) {
-              onMessage(data);
-            }
-          } catch (error) {
-            console.error('🔍 WebSocket消息解析失败:', error);
-          }
-        };
-        
-        websocket.onerror = (error) => {
-          websocket.close();
-        };
-        
-        websocket.onclose = (event) => {
-          // 静默处理关闭事件
-        };
-        
+        // 仅返回会话ID与后端原始数据，WebSocket连接由 WebSocketConnection 统一管理
         return {
-          websocket,
-          conversationId: realConversationId // 使用API返回的字段名
+          conversationId: realConversationId,
+          message: initialResponse.data?.message,
+          data: initialResponse.data
         };
       } else {
         throw new Error('API响应中未包含conversation_id');
@@ -561,23 +474,7 @@ const deletePage = async (websiteId: any) => {
   }
 };
 
-// 新增：生成 websiteId 接口
-const generateWebsiteId = async () => {
-  try {
-    // 发送 POST 请求到 /alternatively/generate/websiteId
-    const response = await apiClient.post('/alternatively/generate/websiteId');
-    const data = response.data;
-    // 统一：若无 code 字段，则补充 code:200
-    if (data && typeof data === 'object' && 'code' in data) {
-      return data;
-    }
-    return { code: 200, data };
-  } catch (error) {
-    // 记录错误信息并重新抛出，以便调用者处理
-    console.error('Failed to generate websiteId:', error);
-    throw error;
-  }
-};
+
 
 // 新增：根据 websiteId 获取生成 alternatively 页面列表
 const getAlternativeWebsiteResultList = async (websiteId: any) => {
@@ -1207,10 +1104,6 @@ apiClient.resetPassword = resetPassword;
 apiClient.googleLogin = googleLogin;
 apiClient.googleCallback = googleCallback;
 apiClient.getAlternativeStatus = getAlternativeStatus;
-apiClient.generateAlternative = generateAlternative;
-apiClient.getAlternativeDetail = getAlternativeDetail;
-apiClient.getAlternativeSources = getAlternativeSources;
-apiClient.getAlternativeResult = getAlternativeResult;
 apiClient.searchCompetitor = searchCompetitor;
 apiClient.chatWithAI = chatWithAI;
 apiClient.changeStyle = changeStyle;
@@ -1220,7 +1113,6 @@ apiClient.getCustomerPackage = getCustomerPackage;
 apiClient.getAlternativeChatHistory = getAlternativeChatHistory;
 apiClient.googleOneTapLogin = googleOneTapLogin;
 apiClient.deletePage = deletePage;
-apiClient.generateWebsiteId = generateWebsiteId;
 apiClient.getAlternativeWebsiteResultList = getAlternativeWebsiteResultList;
 apiClient.getProductsByCustomerId = getProductsByCustomerId;
 apiClient.getSubfolders = getSubfolders;
