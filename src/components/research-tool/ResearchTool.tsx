@@ -159,7 +159,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   // 监听localStorage中的域名变化
   useEffect(() => {
     const checkDomain = () => {
-      const domain = localStorage.getItem('currentDomain');
+      const domain = localStorage.getItem('pendingDomainInput');
       if (domain && domain !== currentDomain) {
         setCurrentDomain(domain);
       }
@@ -170,7 +170,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
     // 监听storage事件
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'currentDomain') {
+      if (e.key === 'pendingDomainInput') {
         setCurrentDomain(e.newValue || '');
       }
     };
@@ -330,6 +330,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             
             // 添加AI思考消息
             messageHandler.addAgentThinkingMessage();
+            
+            // 发送完成后，删除localStorage中的域名，避免影响下一次输入
+            localStorage.removeItem('pendingDomainInput');
+            localStorage.removeItem('currentProductUrl');
+            
+            console.log('✅ 域名已自动发送并清理localStorage:', currentDomain);
           }
         }
       }, 1000); // 延迟1秒发送
@@ -337,6 +343,48 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       return () => clearTimeout(timer);
     }
   }, [conversationId, wsConnected, currentDomain, messages.length, messageHandler]);
+
+  // 额外的检查：确保在页面加载完成后能正确触发自动发送
+  useEffect(() => {
+    // 当页面完全加载后，检查是否需要自动发送域名
+    if (conversationId && currentDomain && !wsConnected) {
+      // 如果WebSocket还没有连接，等待连接成功
+      const checkConnection = () => {
+        if (wsConnected && webSocketRef.current?.isConnected) {
+          // 延迟发送，确保页面完全加载
+          setTimeout(() => {
+            if (messages.length === 0) {
+              // 自动发送域名
+              const message = {
+                type: 'user_message',
+                content: currentDomain,
+                domain: currentDomain,
+                conversationId: conversationId,
+                timestamp: new Date().toISOString()
+              };
+
+              if (webSocketRef.current?.isConnected) {
+                webSocketRef.current.sendMessage(message);
+                messageHandler.addUserMessage(currentDomain);
+                messageHandler.addAgentThinkingMessage();
+                
+                // 发送完成后，删除localStorage中的域名
+                localStorage.removeItem('pendingDomainInput');
+                localStorage.removeItem('currentProductUrl');
+                
+                console.log('✅ 页面加载完成后，域名已自动发送并清理localStorage:', currentDomain);
+              }
+            }
+          }, 1500); // 延迟1.5秒发送
+        }
+      };
+
+      // 监听WebSocket连接状态变化
+      const interval = setInterval(checkConnection, 500);
+      
+      return () => clearInterval(interval);
+    }
+  }, [conversationId, currentDomain, wsConnected, messages.length, messageHandler]);
 
   // 顺序队列与去重
   const processedAiTextRef = useRef<Set<string>>(new Set());
@@ -360,6 +408,15 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const processedMessageContentRef = useRef<Set<string>>(new Set());
 
   const typewriteToChatSequential = useCallback(async (fullText: string) => {
+    // 内容去重检查，防止相同内容重复显示
+    if (processedMessageContentRef.current.has(fullText.trim())) {
+      console.log('🔍 内容已存在，跳过重复显示:', fullText.substring(0, 50) + '...');
+      return;
+    }
+    
+    // 记录内容为已处理
+    processedMessageContentRef.current.add(fullText.trim());
+    
     const messageId = messageHandler.addAgentThinkingMessage();
     const baseDelay = 24;
     return await new Promise<void>((resolve) => {
@@ -584,6 +641,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     const isChatEnd = !!(payload && (payload.event === 'chat_end' || payload.type === 'chat_end'));
     const isHandoffStart = !!(payload && (payload.event === 'handoff_start' || payload.type === 'handoff_start'));
     const isHandoffEnd = !!(payload && (payload.event === 'handoff_end' || payload.type === 'handoff_end'));
+    const isInterrupt = !!(payload && payload.type === 'interrupt');
 
 
     // 将后续的处理逻辑封装为函数
@@ -723,6 +781,22 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               markMessageAsProcessed(one);
             }
           } catch { }
+        }
+
+        // 处理 interrupt → 将 prompt 内容打印到聊天中
+        if (one.type === 'interrupt') {
+          try {
+            const prompt = one?.result?.prompt || one?.prompt || one?.content;
+            if (typeof prompt === 'string' && prompt.trim().length > 0) {
+              // 使用打字机效果显示prompt内容
+              typewriteToChatSequential(prompt);
+              // 标记消息为已处理，防止重复执行
+              markMessageAsProcessed(one);
+              console.log('🔍 processOne: 收到中断消息，prompt内容已显示到聊天中:', prompt);
+            }
+          } catch (e) {
+            console.error('processOne: 处理中断消息时出错:', e);
+          }
         }
 
         if (isToolResultOne) {
@@ -900,6 +974,18 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             if (md) setLatestMarkdown(md);
             break;
           }
+          case 'interrupt': {
+            // 处理中断消息，将prompt内容打印到聊天中
+            const prompt = one?.result?.prompt || one?.prompt || one?.content;
+            if (typeof prompt === 'string' && prompt.trim().length > 0) {
+              // 使用打字机效果显示prompt内容
+              typewriteToChatSequential(prompt);
+              // 标记消息为已处理，防止重复执行
+              markMessageAsProcessed(one);
+              console.log('🔍 收到中断消息，prompt内容已显示到聊天中:', prompt);
+            }
+            break;
+          }
           default:
             if (typeof one?.markdown === 'string') {
               setLatestMarkdown(one.markdown);
@@ -1037,6 +1123,22 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             markMessageAsProcessed(payload);
           }
         } catch { }
+      }
+
+      // 处理 interrupt：将 prompt 内容打印到聊天中
+      if (isInterrupt) {
+        try {
+          const prompt = payload?.result?.prompt || payload?.prompt || payload?.content;
+          if (typeof prompt === 'string' && prompt.trim().length > 0) {
+            // 使用打字机效果显示prompt内容
+            typewriteToChatSequential(prompt);
+            // 标记消息为已处理，防止重复执行
+            markMessageAsProcessed(payload);
+            console.log('🔍 收到中断消息，prompt内容已显示到聊天中:', prompt);
+          }
+        } catch (e) {
+          console.error('处理中断消息时出错:', e);
+        }
       }
 
       if (isToolResult) {
@@ -1291,7 +1393,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       let lastTs: string | number | null = null;
       for (const rec of records) {
         try {
-          handleWebSocketMessage(rec);
+          // 检查消息是否已经处理过，避免重复处理
+          if (!isMessageProcessed(rec)) {
+            handleWebSocketMessage(rec);
+          }
           const ts =
             (typeof rec?.timestamp === 'string' && rec.timestamp) ||
             (typeof rec?.ts === 'number' && rec.ts) ||
@@ -1339,13 +1444,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       setShowSlogan(false);
 
       // 处理域名输入 - 存储到localStorage
-      const processedDomain = formattedInput;
-      localStorage.setItem('currentDomain', processedDomain);
+      localStorage.setItem('pendingDomainInput', formattedInput);
       localStorage.setItem('currentProductUrl', formattedInput);
 
       // 只有当域名真正变化时才更新状态
-      if (processedDomain !== currentDomain) {
-        setCurrentDomain(processedDomain);
+      if (formattedInput !== currentDomain) {
+        setCurrentDomain(formattedInput);
       }
 
       // 根据图片规则：用户发送第一条消息创建聊天室

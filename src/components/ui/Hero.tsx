@@ -210,6 +210,13 @@ export const Hero: React.FC = () => {
             // 显示跳转等待页面
             setIsRedirecting(true);
             
+            // 确保域名被存储到localStorage（如果还没有存储的话）
+            if (formattedInput && !localStorage.getItem('pendingDomainInput')) {
+              // 直接存储用户输入，不进行域名验证
+              localStorage.setItem('pendingDomainInput', formattedInput);
+              console.log('🔍 Hero.tsx - 用户输入已存储到localStorage:', formattedInput);
+            }
+            
             // 跳转到聊天室页面，传递真实的conversationId
             router.replace(`${targetPath}?conversationId=${newConvId}`);
 
@@ -251,6 +258,13 @@ export const Hero: React.FC = () => {
           // 显示跳转等待页面
           setIsRedirecting(true);
           
+          // 确保域名被存储到localStorage（如果还没有存储的话）
+          if (formattedInput && !localStorage.getItem('pendingDomainInput')) {
+            // 直接存储用户输入，不进行域名验证
+            localStorage.setItem('pendingDomainInput', formattedInput);
+            console.log('🔍 Hero.tsx - 用户输入已存储到localStorage:', formattedInput);
+          }
+          
           // 跳转到聊天室页面，传递conversationId参数
           router.replace(`${targetPath}?conversationId=${conversationId}`);
           
@@ -268,6 +282,8 @@ export const Hero: React.FC = () => {
           
           // 处理URL_GET标记的情况
           if (rawAnswer.includes('[URL_GET]')) {
+            // 处理域名输入 - 存储到localStorage
+            localStorage.setItem('pendingDomainInput', formattedInput);
             localStorage.setItem('currentProductUrl', formattedInput);
             messageHandler.updateAgentMessage(rawAnswer, thinkingMessageId);
             
@@ -331,6 +347,8 @@ export const Hero: React.FC = () => {
         const rawAnswer = (response as any).message.answer;
         
         if (rawAnswer.includes('[URL_GET]')) {
+          // 处理域名输入 - 存储到localStorage
+          localStorage.setItem('pendingDomainInput', formattedInput);
           localStorage.setItem('currentProductUrl', formattedInput);
           messageHandler.updateAgentMessage(rawAnswer, thinkingMessageId);
           
@@ -441,7 +459,10 @@ export const Hero: React.FC = () => {
           {/* 加载文本 */}
           <div className="text-center">
             <p className="text-gray-700 dark:text-gray-300 text-base sm:text-lg font-medium">
-              Initializing data...
+              Redirecting to research tool...
+            </p>
+            <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">
+              Please wait while we prepare your workspace
             </p>
           </div>
         </div>

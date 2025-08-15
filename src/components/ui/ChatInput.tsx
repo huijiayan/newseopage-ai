@@ -78,25 +78,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const processDomainInput = (input: string): string => {
     let domain = input.trim();
     
-    // 验证域名格式
-    if (!validateDomain(domain)) {
-      return input; // 返回原始输入，让用户看到错误
-    }
-    
-    // 提取域名
-    const extractedDomain = extractDomain(domain);
-    
-    // 存储到localStorage
-    localStorage.setItem('currentDomain', extractedDomain);
+    // 直接存储用户输入到localStorage，不进行域名验证
+    localStorage.setItem('pendingDomainInput', domain);
     localStorage.setItem('currentProductUrl', domain);
     
-    console.log('🔍 域名已处理并存储:', {
+    console.log('🔍 ChatInput: 用户输入已存储到localStorage:', {
       original: domain,
-      extracted: extractedDomain,
       chatType
     });
     
-    return extractedDomain;
+    return domain;
   };
 
   // 处理输入变化
