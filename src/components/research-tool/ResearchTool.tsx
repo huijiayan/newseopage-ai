@@ -2,7 +2,7 @@
 
 "use client";
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useMessage } from '@/components/ui/CustomMessage';
 import ChatInput from '@/components/ui/ChatInput';
 import { InfoCircleOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
@@ -34,17 +34,47 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
   // 添加主题配置
   const { currentTheme, getThemeConfig, isHydrated, switchTheme } = useTheme();
+  
+  // 获取URL参数
+  const searchParams = useSearchParams();
 
   // 获取research-tool主题配置，提供fallback避免hydration不匹配
   const themeStyles = isHydrated ? getThemeConfig('researchTool') : {
-    background: 'linear-gradient(180deg, #121826 0%, #030810 100%)'
+    background: 'linear-gradient(180deg, #121826 0%, #030810 100%)',
+    pagesGrid: {
+      pageCard: {
+        background: 'bg-white',
+        border: 'border border-gray-300',
+        borderSelected: 'border border-blue-600'
+      },
+      pageTitle: {
+        text: 'text-black'
+      },
+      tdkLabel: {
+        text: 'text-gray-700'
+      },
+      pageDescription: {
+        text: 'text-gray-600'
+      },
+      keywordTag: {
+        background: 'bg-gray-200',
+        text: 'text-black'
+      },
+      metrics: {
+        label: 'text-gray-600',
+        value: 'text-black'
+      },
+      viewButton: {
+        background: 'bg-gradient-to-r from-blue-600 via-purple-600 to-orange-500'
+      }
+    }
   };
 
   // 添加缺失的状态变量
   const [thinkingLogExpanded, setThinkingLogExpanded] = React.useState<Record<string, boolean>>({});
   const messageApi = useMessage();
 
-  // 仅保留“WebSocket V2 收到原始消息”日志，屏蔽其它控制台输出
+  // 仅保留"WebSocket V2 收到原始消息"日志，屏蔽其它控制台输出
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const original = {
@@ -152,6 +182,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     };
   }, []); // 移除currentDomain依赖，避免无限循环
 
+
+
   const [startedTaskCountRef] = React.useState(React.useRef(0));
   const [retryCountRef] = React.useState(React.useRef(0));
   const [codeContainerRef] = React.useState(React.useRef<HTMLPreElement>(null));
@@ -240,6 +272,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     pathname,
   } = useResearchTool(conversationId);
 
+
+
   // 记录已提交生成的 hubPageId，用于在 UI 中彻底移除这些卡片
   const [submittedHubIds, setSubmittedHubIds] = useState<Set<string>>(new Set());
   // 是否将剩余卡片隐藏（不占位），提供底部按钮控制显示/隐藏
@@ -270,16 +304,60 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const [wsConnectionState, setWsConnectionState] = useState('CLOSED');
   const [wsError, setWsError] = useState<string | null>(null);
 
+  // 监听conversationId变化，跳转成功后自动发送域名
+  useEffect(() => {
+    // 只有当conversationId存在且WebSocket连接成功时才自动发送
+    if (conversationId && wsConnected && currentDomain) {
+      // 延迟发送，确保页面完全加载
+      const timer = setTimeout(() => {
+        // 检查是否已经有消息，避免重复发送
+        if (messages.length === 0) {
+          // 自动发送域名
+          const message = {
+            type: 'user_message',
+            content: currentDomain,
+            domain: currentDomain,
+            conversationId: conversationId,
+            timestamp: new Date().toISOString()
+          };
+
+          // 通过WebSocket发送消息
+          if (webSocketRef.current && webSocketRef.current.isConnected) {
+            webSocketRef.current.sendMessage(message);
+            
+            // 添加用户消息到UI
+            messageHandler.addUserMessage(currentDomain);
+            
+            // 添加AI思考消息
+            messageHandler.addAgentThinkingMessage();
+          }
+        }
+      }, 1000); // 延迟1秒发送
+
+      return () => clearTimeout(timer);
+    }
+  }, [conversationId, wsConnected, currentDomain, messages.length, messageHandler]);
+
   // 顺序队列与去重
   const processedAiTextRef = useRef<Set<string>>(new Set());
-  type QueueItem =
-    | { kind: 'text'; content: string }
-    | { kind: 'hub_entries'; pageType?: string; entries: any[] }
-    | { kind: 'html_chunk'; resultId: string; title?: string; chunk: string; replace?: boolean };
-  const aiQueueRef = useRef<QueueItem[]>([]);
-  const isProcessingQueueRef = useRef(false);
+  // 删除队列相关代码，改为直接渲染
+  // type QueueItem =
+  //   | { kind: 'text'; content: string }
+  //   | { kind: 'hub_entries'; pageType?: string; entries: any[] }
+  //   | { kind: 'html_chunk'; resultId: string; title?: string; chunk: string; replace?: boolean };
+  // const aiQueueRef = useRef<QueueItem[]>([]);
+  // const isProcessingQueueRef = useRef(false);
 
   const agentPanelInsertedRef = useRef<boolean>(false);
+  const processedHubEntriesRef = useRef<Set<string>>(new Set());
+
+  // 流式HTML处理相关状态
+  const streamingHtmlRef = useRef<Map<string, { content: string; title: string; startTime: number }>>(new Map());
+  const [activeStreamingTab, setActiveStreamingTab] = useState<string | null>(null);
+
+  // 消息去重相关状态
+  const processedMessageIdsRef = useRef<Set<string>>(new Set());
+  const processedMessageContentRef = useRef<Set<string>>(new Set());
 
   const typewriteToChatSequential = useCallback(async (fullText: string) => {
     const messageId = messageHandler.addAgentThinkingMessage();
@@ -321,58 +399,6 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     }));
   }, []);
 
-  const processAIQueue = useCallback(async () => {
-    if (isProcessingQueueRef.current) return;
-    isProcessingQueueRef.current = true;
-    try {
-      while (aiQueueRef.current.length > 0) {
-        const item = aiQueueRef.current.shift()!;
-        if (item.kind === 'text') {
-          await typewriteToChatSequential(item.content);
-        } else if (item.kind === 'hub_entries') {
-          try {
-            const getTs = (x: any) => new Date(x?.timestamp || x?.createdAt || Date.now()).getTime();
-            const sortedEntries = Array.isArray(item.entries)
-              ? [...item.entries].sort((a, b) => getTs(a) - getTs(b))
-              : [];
-            const pages = transformHubEntriesToPages(sortedEntries);
-            setMessages((prev) => {
-              const nowIso = new Date().toISOString();
-              const next: any[] = [
-                ...prev,
-                {
-                  id: `pages-grid-${Date.now()}`,
-                  type: 'pages-grid',
-                  content: '',
-                  pages,
-                  pageType: item.pageType || 'alternative',
-                  timestamp: nowIso,
-                },
-              ];
-              next.sort((a, b) => new Date(a.timestamp || a.createdAt || 0).getTime() - new Date(b.timestamp || b.createdAt || 0).getTime());
-              return next as any;
-            });
-          } catch (err) {
-            messageHandler.addSystemMessage('⚠️ 候选卡片生成失败，请重试');
-          }
-        } else if (item.kind === 'html_chunk') {
-          // 累积 HTML 片段并输出到右侧 Generated Pages
-          try {
-            // 使用 localStorage 临时累积（避免刷新丢失；也可改为 useRef map）
-            const key = `html_acc_${item.resultId}`;
-            const prev = localStorage.getItem(key) || '';
-            const nextHtml = item.replace ? item.chunk : prev + item.chunk;
-            localStorage.setItem(key, nextHtml);
-            // 每次片段都尝试预览（data URL 会替换为最新内容）
-            addPreviewHtml(nextHtml, item.title || `Preview ${item.resultId.slice(0, 6)}`);
-          } catch {}
-        }
-      }
-    } finally {
-      isProcessingQueueRef.current = false;
-    }
-  }, [setMessages, transformHubEntriesToPages, typewriteToChatSequential]);
-
   // 便捷函数：将预览链接添加到右侧 Generated Pages 面板
   const addPreviewTab = useCallback((url: string, title?: string) => {
     if (!url) return;
@@ -393,8 +419,128 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       if (typeof html !== 'string' || html.trim().length === 0) return;
       const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
       addPreviewTab(dataUrl, title || 'HTML Preview');
-    } catch {}
+    } catch { }
   }, [addPreviewTab]);
+
+    // 处理流式HTML消息的函数
+  const handleStreamingHtmlMessage = useCallback((message: any) => {
+    const { type, tool_name, agent_name, result, seq, metadata } = message;
+ 
+    // 只处理 write_html_codes_tool 的消息
+    if (tool_name !== 'write_html_codes_tool') return;
+ 
+    // 生成唯一的流式ID
+    const streamId = `${agent_name}_${tool_name}_${metadata?.run_id || Date.now()}`;
+ 
+    if (type === 'message_start') {
+      // 开始流式输出，初始化HTML内容
+      const title = `Generated HTML Page - ${new Date().toLocaleTimeString()}`;
+      streamingHtmlRef.current.set(streamId, {
+        content: '',
+        title,
+        startTime: Date.now()
+      });
+      
+      // 创建流式预览标签
+      const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent('')}`;
+      addPreviewTab(dataUrl, title);
+      setActiveStreamingTab(streamId);
+ 
+    } else if (type === 'message_chunk') {
+      // 接收HTML片段，拼接到现有内容并实时更新预览
+      const current = streamingHtmlRef.current.get(streamId);
+      if (current && typeof result === 'string') {
+        current.content += result;
+        
+        // 实时更新预览内容
+        if (activeStreamingTab === streamId) {
+          const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(current.content)}`;
+          // 更新现有标签的URL
+          setBrowserTabs(prev => 
+            prev.map(tab => 
+              tab.title === current.title 
+                ? { ...tab, url: dataUrl }
+                : tab
+            )
+          );
+        }
+      }
+ 
+    } else if (type === 'message_end') {
+      // 流式输出结束，立即渲染完整HTML到右侧预览
+      const current = streamingHtmlRef.current.get(streamId);
+      if (current && current.content.trim().length > 0) {
+        // 立即将完整HTML添加到右侧预览并激活标签
+        activateHtmlPreview(current.content, current.title);
+        
+        // 清理流式内容
+        streamingHtmlRef.current.delete(streamId);
+        setActiveStreamingTab(null);
+      }
+    }
+  }, [addPreviewTab, setBrowserTabs, activeStreamingTab]);
+
+  // 确保HTML生成完成后立即激活预览标签
+  const activateHtmlPreview = useCallback((htmlContent: string, title: string) => {
+    // 添加到预览
+    addPreviewHtml(htmlContent, title);
+    
+    // 找到刚添加的标签并激活它
+    setBrowserTabs(prev => {
+      const newTabs = [...prev];
+      const newTab = newTabs[newTabs.length - 1];
+      if (newTab && newTab.title === title) {
+        setActiveTab(newTab.id);
+      }
+      return newTabs;
+    });
+  }, [addPreviewHtml, setBrowserTabs, setActiveTab]);
+
+  // 消息去重检查函数
+  const isMessageProcessed = useCallback((message: any): boolean => {
+    // 生成消息的唯一标识
+    const messageId = message?.id || 
+                     message?.seq?.toString() || 
+                     `${message?.type}_${message?.timestamp}_${message?.tool_name}_${message?.agent_name}` ||
+                     `${Date.now()}_${Math.random()}`;
+    
+    // 检查消息ID是否已处理
+    if (processedMessageIdsRef.current.has(messageId)) {
+      return true; // 已处理
+    }
+    
+    // 检查消息内容是否重复（对于文本消息）
+    if (message?.result || message?.content) {
+      const content = (message.result || message.content || '').toString().trim();
+      if (content && processedMessageContentRef.current.has(content)) {
+        return true; // 内容重复
+      }
+    }
+    
+    return false; // 未处理
+  }, []);
+
+  // 标记消息为已处理
+  const markMessageAsProcessed = useCallback((message: any): void => {
+    // 生成消息的唯一标识
+    const messageId = message?.id || 
+                     message?.seq?.toString() || 
+                     `${message?.type}_${message?.timestamp}_${message?.tool_name}_${message?.agent_name}` ||
+                     `${Date.now()}_${Math.random()}`;
+    
+    // 记录消息ID
+    processedMessageIdsRef.current.add(messageId);
+    
+    // 记录消息内容（对于文本消息）
+    if (message?.result || message?.content) {
+      const content = (message.result || message.content || '').toString().trim();
+      if (content) {
+        processedMessageContentRef.current.add(content);
+      }
+    }
+  }, []);
+
+
 
   // 勾选/点击 Edit 时，通过 WebSocket 的 message.type 传递 hubPageId
   const sendSelectedHubId = useCallback((hubId: string) => {
@@ -429,21 +575,31 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       try { payload = JSON.parse(payload); } catch { /* ignore */ }
     }
 
+    // 处理流式HTML消息
+    handleStreamingHtmlMessage(payload);
+
     const isToolCall = !!(payload && (payload.event === 'tool_call' || payload.type === 'tool_call'));
     const isToolResult = !!(payload && (payload.event === 'tool_result' || payload.type === 'tool_result'));
     const isChatStart = !!(payload && (payload.event === 'chat_start' || payload.type === 'chat_start'));
-    const isChatEnd =   !!(payload && (payload.event === 'chat_end'   || payload.type === 'chat_end'));
+    const isChatEnd = !!(payload && (payload.event === 'chat_end' || payload.type === 'chat_end'));
     const isHandoffStart = !!(payload && (payload.event === 'handoff_start' || payload.type === 'handoff_start'));
     const isHandoffEnd = !!(payload && (payload.event === 'handoff_end' || payload.type === 'handoff_end'));
 
+
     // 将后续的处理逻辑封装为函数
     const processOne = (one: any) => {
+      // 消息去重检查
+      if (isMessageProcessed(one)) {
+        return; // 如果消息已处理，直接返回
+      }
+      
       const isToolCallOne = !!(one && (one.event === 'tool_call' || one.type === 'tool_call'));
       const isToolResultOne = !!(one && (one.event === 'tool_result' || one.type === 'tool_result'));
       const isChatStartOne = !!(one && (one.event === 'chat_start' || one.type === 'chat_start'));
-      const isChatEndOne =   !!(one && (one.event === 'chat_end'   || one.type === 'chat_end'));
+      const isChatEndOne = !!(one && (one.event === 'chat_end' || one.type === 'chat_end'));
       const isHandoffStartOne = !!(one && (one.event === 'handoff_start' || one.type === 'handoff_start'));
       const isHandoffEndOne = !!(one && (one.event === 'handoff_end' || one.type === 'handoff_end'));
+
 
       try {
         // 一旦收到 chat_start，立即显示处理面板（区域样式不变，仅开启渲染）
@@ -462,6 +618,14 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               ...prev,
               { id: `agent-panel-${Date.now()}`, type: 'agent-panel', content: '', timestamp: new Date().toISOString() } as any
             ]);
+            // 同时初始化一个默认的 agent panel，确保渲染条件满足
+            setShowAgentPanel(true);
+            setAgentPanels(prev => {
+              if (prev.length === 0) {
+                return [{ agentName: 'Initializing...', steps: [], statusMap: {}, queue: [] }];
+              }
+              return prev;
+            });
           }
           if (agentName) {
             setShowAgentPanel(true);
@@ -490,24 +654,27 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           const arrMessages = Array.isArray(state?.messages) ? state.messages : [];
           const arr = [...arrContent, ...arrMessages];
 
-          for (const item of arr) {
-            if (item?.type === 'user_message') continue;
-            if (typeof item?.content === 'string' && item.content.trim().length > 0) {
-              if (!processedAiTextRef.current.has(item.content)) {
-                processedAiTextRef.current.add(item.content);
-                aiQueueRef.current.push({ kind: 'text', content: item.content });
-              }
-              continue;
-            }
-            const msgType = item?.type || item?._type;
-            if (msgType === 'AIMessage' && typeof item?.content === 'string' && item.content.trim().length > 0) {
-              if (!processedAiTextRef.current.has(item.content)) {
-                processedAiTextRef.current.add(item.content);
-                aiQueueRef.current.push({ kind: 'text', content: item.content });
-              }
-              continue;
-            }
-          }
+                  // 注释掉tool_call中的文本渲染，只保留chat_end的result渲染
+        // for (const item of arr) {
+        //   if (item?.type === 'user_message') continue;
+        //   if (typeof item?.content === 'string' && item.content.trim().length > 0) {
+        //     if (!processedAiTextRef.current.has(item.content)) {
+        //       processedAiTextRef.current.add(item.content);
+        //       // 直接渲染，不进入队列
+        //       typewriteToChatSequential(item.content);
+        //     }
+        //     continue;
+        //   }
+        //   const msgType = item?.type || item?._type;
+        //   if (msgType === 'AIMessage' && typeof item?.content === 'string' && item.content.trim().length > 0) {
+        //     if (!processedAiTextRef.current.has(item.content)) {
+        //       processedAiTextRef.current.add(item.content);
+        //       // 直接渲染，不进入队列
+        //       typewriteToChatSequential(item.content);
+        //     }
+        //     continue;
+        //   }
+        // }
         }
 
         // 处理 agent handoff 事件
@@ -540,18 +707,22 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                 ...prev,
                 [agentName]: { ...(prev[agentName] || {}), [stepKey]: one }
               }));
-            } catch {}
+            } catch { }
           }
         }
+
+
 
         // 处理 chat_end → 打字机消息
         if (isChatEndOne) {
           try {
             const endResult = (one?.result || one?.payload?.result || one?.content || '').toString();
             if (endResult && endResult.trim().length > 0) {
-              aiQueueRef.current.push({ kind: 'text', content: endResult });
+              typewriteToChatSequential(endResult);
+              // 标记消息为已处理
+              markMessageAsProcessed(one);
             }
-          } catch {}
+          } catch { }
         }
 
         if (isToolResultOne) {
@@ -589,6 +760,18 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               }));
             }
           } catch { }
+
+          // 新增：处理 fetch_website_html_tool 的结果
+          const agentName = (one?.agent_name || one?.content?.agent_name || one?.payload?.agent_name || '').toString().trim();
+          const toolName = (one?.tool_name || one?.content?.tool || one?.tool || '').toString().trim();
+
+          if (toolName === 'fetch_website_html_tool') {
+            const resultData = one?.result || one?.payload?.result || output?.result || output || null;
+            if (resultData) {
+              // 只显示系统消息，不在右侧预览HTML内容
+              const url = resultData?.url || 'Unknown URL';
+            }
+          }
 
           let hubEntries: any[] = [];
           let pageType: string | undefined = output?.page_type || output?.pageType;
@@ -637,39 +820,60 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                 const title = entry?.title || resultId;
                 const pageHtml = entry?.page_html || entry?.html || '';
                 if (typeof pageHtml === 'string') {
-                  // 将整段当作一个 chunk 推入队列
-                  aiQueueRef.current.push({ kind: 'html_chunk', resultId, title, chunk: pageHtml, replace: true });
+                  // 直接渲染，不进入队列
+                  addPreviewHtml(pageHtml, title);
                 } else if (Array.isArray(entry?.chunks)) {
                   // 后端若以 chunks 数组形式流式提供
                   for (const ch of entry.chunks) {
                     const text = typeof ch === 'string' ? ch : (ch?.text || '');
-                    if (text) aiQueueRef.current.push({ kind: 'html_chunk', resultId, title, chunk: text });
+                    if (text) {
+                      // 直接渲染，不进入队列
+                      addPreviewHtml(text, title);
+                    }
                   }
                 }
               }
             }
-          } catch {}
+          } catch { }
           if (hubEntries.length > 0) {
             try {
               const getTs = (x: any) => new Date(x?.timestamp || x?.createdAt || Date.now()).getTime();
               const sortedEntries = [...hubEntries].sort((a, b) => getTs(a) - getTs(b));
-              const pages = transformHubEntriesToPages(sortedEntries);
-              setMessages((prev) => {
-                const nowIso = new Date().toISOString();
-                const next: any[] = [
-                  ...prev,
-                  {
-                    id: `pages-grid-${Date.now()}`,
-                    type: 'pages-grid',
-                    content: '',
-                    pages,
-                    pageType: pageType || 'alternative',
-                    timestamp: nowIso,
-                  },
-                ];
-                next.sort((a, b) => new Date(a.timestamp || a.createdAt || 0).getTime() - new Date(b.timestamp || b.createdAt || 0).getTime());
-                return next as any;
+
+              // 检查是否有新的 hub_entries 数据
+              const newEntries = sortedEntries.filter(entry => {
+                const entryId = entry?.id || entry?.hubPageId || entry?.result_id || '';
+                return entryId && !processedHubEntriesRef.current.has(entryId);
               });
+
+              // 只有当有新数据时才更新页面
+              if (newEntries.length > 0) {
+                // 记录已处理的条目ID
+                newEntries.forEach(entry => {
+                  const entryId = entry?.id || entry?.hubPageId || entry?.result_id || '';
+                  if (entryId) {
+                    processedHubEntriesRef.current.add(entryId);
+                  }
+                });
+
+                const pages = transformHubEntriesToPages(newEntries);
+                setMessages((prev) => {
+                  const nowIso = new Date().toISOString();
+                  const next: any[] = [
+                    ...prev,
+                    {
+                      id: `pages-grid-${Date.now()}`,
+                      type: 'pages-grid',
+                      content: '',
+                      pages,
+                      pageType: pageType || 'alternative',
+                      timestamp: nowIso,
+                    },
+                  ];
+                  next.sort((a, b) => new Date(a.timestamp || a.createdAt || 0).getTime() - new Date(b.timestamp || b.createdAt || 0).getTime());
+                  return next as any;
+                });
+              }
             } catch (err) {
               messageHandler.addSystemMessage('⚠️ 候选卡片生成失败，请重试');
             }
@@ -686,7 +890,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       } catch (e) { }
 
       // 顺序处理队列（打字机等）
-      processAIQueue();
+      // processAIQueue(); // 删除队列处理，改为直接渲染
 
       // 处理其他类型的消息
       if (one.type) {
@@ -696,27 +900,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
             if (md) setLatestMarkdown(md);
             break;
           }
-          case 'message':
-          case 'agent':
-            messageHandler.addSystemMessage(one.content);
-            break;
-          case 'error':
-            messageHandler.addSystemMessage(`❌ 错误: ${one.content}`);
-            break;
-          case 'system':
-            if (!shouldSuppressMessage(one.content)) {
-              messageHandler.addSystemMessage(one.content);
-            }
-            break;
-          case 'warning':
-            messageHandler.addSystemMessage(one.content);
           default:
             if (typeof one?.markdown === 'string') {
               setLatestMarkdown(one.markdown);
-            } else if (typeof one?.content === 'string') {
-              if (!shouldSuppressMessage(one.content)) {
-                messageHandler.addSystemMessage(one.content);
-              }
             }
             const genId = one?.generated_page_id || one?.generatedPageId || one?.result_id || one?.resultId;
             if (typeof genId === 'string' && genId.trim().length > 0) {
@@ -734,8 +920,8 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           (typeof one?.markdown === 'string' && one.markdown) ||
           '';
         if (textCandidate && textCandidate.trim().length > 0) {
-          aiQueueRef.current.push({ kind: 'text', content: textCandidate });
-          processAIQueue();
+          // 直接渲染，不进入队列
+          typewriteToChatSequential(textCandidate);
         }
       }
     };
@@ -780,26 +966,29 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         const arrMessages = Array.isArray(state?.messages) ? state.messages : [];
         const arr = [...arrContent, ...arrMessages];
 
-        for (const item of arr) {
-          if (item?.type === 'user_message') continue; // 跳过用户输入
+        // 注释掉tool_call中的文本渲染，只保留chat_end的result渲染
+        // for (const item of arr) {
+        //   if (item?.type === 'user_message') continue; // 跳过用户输入
 
-          if (typeof item?.content === 'string' && item.content.trim().length > 0) {
-            if (!processedAiTextRef.current.has(item.content)) {
-              processedAiTextRef.current.add(item.content);
-              aiQueueRef.current.push({ kind: 'text', content: item.content });
-            }
-            continue;
-          }
-          // 兼容消息对象形态：{ _type: 'AIMessage', content: '...' }
-          const msgType = item?.type || item?._type;
-          if (msgType === 'AIMessage' && typeof item?.content === 'string' && item.content.trim().length > 0) {
-            if (!processedAiTextRef.current.has(item.content)) {
-              processedAiTextRef.current.add(item.content);
-              aiQueueRef.current.push({ kind: 'text', content: item.content });
-            }
-            continue;
-          }
-        }
+        //   if (typeof item?.content === 'string' && item.content.trim().length > 0) {
+        //     if (!processedAiTextRef.current.has(item.content)) {
+        //       processedAiTextRef.current.add(item.content);
+        //       // 直接渲染，不进入队列
+        //       typewriteToChatSequential(item.content);
+        //     }
+        //     continue;
+        //   }
+        //   // 兼容消息对象形态：{ _type: 'AIMessage', content: '...' }
+        //   const msgType = item?.type || item?._type;
+        //   if (msgType === 'AIMessage' && typeof item?.content === 'string' && item.content.trim().length > 0) {
+        //     if (!processedAiTextRef.current.has(item.content)) {
+        //       processedAiTextRef.current.add(item.content);
+        //       // 直接渲染，不进入队列
+        //       typewriteToChatSequential(item.content);
+        //     }
+        //     continue;
+        //   }
+        // }
       }
 
       // 处理 agent handoff 事件，展示到各自的 agent 卡片中
@@ -833,7 +1022,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               ...prev,
               [agentName]: { ...(prev[agentName] || {}), [stepKey]: payload }
             }));
-          } catch {}
+          } catch { }
         }
       }
 
@@ -842,9 +1031,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
         try {
           const endResult = (payload?.result || payload?.payload?.result || payload?.content || '').toString();
           if (endResult && endResult.trim().length > 0) {
-            aiQueueRef.current.push({ kind: 'text', content: endResult });
+            // 直接渲染，不进入队列
+            typewriteToChatSequential(endResult);
+            // 标记消息为已处理
+            markMessageAsProcessed(payload);
           }
-        } catch {}
+        } catch { }
       }
 
       if (isToolResult) {
@@ -935,21 +1127,68 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
               const title = entry?.title || resultId;
               const pageHtml = entry?.page_html || entry?.html || '';
               if (typeof pageHtml === 'string') {
-                aiQueueRef.current.push({ kind: 'html_chunk', resultId, title, chunk: pageHtml, replace: true });
+                // 直接渲染，不进入队列
+                addPreviewHtml(pageHtml, title);
               } else if (Array.isArray(entry?.chunks)) {
                 for (const ch of entry.chunks) {
                   const text = typeof ch === 'string' ? ch : (ch?.text || '');
-                  if (text) aiQueueRef.current.push({ kind: 'html_chunk', resultId, title, chunk: text });
+                  if (text) {
+                    // 直接渲染，不进入队列
+                    addPreviewHtml(text, title);
+                  }
                 }
               }
             }
           }
-        } catch {}
+        } catch { }
         if (hubEntries.length > 0) {
           const count = hubEntries.length;
           // 在卡片前插入一条提示气泡
-          aiQueueRef.current.push({ kind: 'text', content: `Found ${count} candidate pages. Please check the boxes in the cards below and click Generate.` });
-          aiQueueRef.current.push({ kind: 'hub_entries', pageType, entries: hubEntries });
+          // 直接渲染，不进入队列
+          typewriteToChatSequential(`Found ${count} candidate pages. Please check the boxes in the cards below and click Generate.`);
+
+          // 直接处理hub_entries，不进入队列
+          try {
+            const getTs = (x: any) => new Date(x?.timestamp || x?.createdAt || Date.now()).getTime();
+            const sortedEntries = [...hubEntries].sort((a, b) => getTs(a) - getTs(b));
+
+            // 检查是否有新的 hub_entries 数据
+            const newEntries = sortedEntries.filter(entry => {
+              const entryId = entry?.id || entry?.hubPageId || entry?.result_id || '';
+              return entryId && !processedHubEntriesRef.current.has(entryId);
+            });
+
+            // 只有当有新数据时才更新页面
+            if (newEntries.length > 0) {
+              // 记录已处理的条目ID
+              newEntries.forEach(entry => {
+                const entryId = entry?.id || entry?.hubPageId || entry?.result_id || '';
+                if (entryId) {
+                  processedHubEntriesRef.current.add(entryId);
+                }
+              });
+
+              const pages = transformHubEntriesToPages(newEntries);
+              setMessages((prev) => {
+                const nowIso = new Date().toISOString();
+                const next: any[] = [
+                  ...prev,
+                  {
+                    id: `pages-grid-${Date.now()}`,
+                    type: 'pages-grid',
+                    content: '',
+                    pages,
+                    pageType: pageType || 'alternative',
+                    timestamp: nowIso,
+                  },
+                ];
+                next.sort((a, b) => new Date(a.timestamp || a.createdAt || 0).getTime() - new Date(b.timestamp || b.createdAt || 0).getTime());
+                return next as any;
+              });
+            }
+          } catch (err) {
+            messageHandler.addSystemMessage('⚠️ 候选卡片生成失败，请重试');
+          }
         }
 
         // 如果返回了生成完成的页面ID，自动打开右侧预览标签
@@ -965,58 +1204,11 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
     } catch (e) { }
 
     // 顺序处理队列
-    processAIQueue();
+    // processAIQueue();
 
-    // 处理其他类型的消息
-    if (payload.type) {
-      // 根据消息类型添加到相应的消息列表
-      switch (payload.type) {
-        case 'markdown': {
-          const md = typeof payload.content === 'string' ? payload.content : (typeof payload.markdown === 'string' ? payload.markdown : '');
-          if (md) setLatestMarkdown(md);
-          break;
-        }
-        case 'message':
-        case 'agent':
-          messageHandler.addSystemMessage(payload.content);
-          break;
-        case 'error':
-          messageHandler.addSystemMessage(`❌ 错误: ${payload.content}`);
-          break;
-        case 'system':
-          messageHandler.addSystemMessage(payload.content);
-          break;
-        case 'warning':
-          messageHandler.addSystemMessage(payload.content);
-        default:
-          // 对于未知类型的消息，作为系统消息处理
-          if (typeof payload?.markdown === 'string') {
-            setLatestMarkdown(payload.markdown);
-          } else if (typeof payload?.content === 'string') {
-            messageHandler.addSystemMessage(payload.content);
-          }
-          // 解析可能包含的生成页面ID
-          const genId = payload?.generated_page_id || payload?.generatedPageId || payload?.result_id || payload?.resultId;
-          if (typeof genId === 'string' && genId.trim().length > 0) {
-            const previewUrl = `https://preview.websitelm.site/en/${genId}`;
-            addPreviewTab(previewUrl, `Preview ${genId.slice(0, 6)}`);
-            const matchedHub = recentHubIdsRef.current.find(id => typeof id === 'string' && id.length > 0);
-            logIdDebug('recv', payload, matchedHub, 'default');
-          }
-          break;
-      }
-    } else {
-      // 兜底：无 type 的纯文本或未知结构，按文本渲染
-      const textCandidate =
-        (typeof payload === 'string' && payload) ||
-        (typeof payload?.content === 'string' && payload.content) ||
-        (typeof payload?.markdown === 'string' && payload.markdown) ||
-        '';
-      if (textCandidate && textCandidate.trim().length > 0) {
-        aiQueueRef.current.push({ kind: 'text', content: textCandidate });
-        processAIQueue();
-      }
-    }
+
+    // 调用 processOne 处理消息，确保 agent-panel 消息被正确加入队列
+    processOne(payload); // 删除重复调用，避免消息重复处理
   };
 
   const handleWebSocketError = (error: any) => {
@@ -1065,10 +1257,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   useEffect(() => {
     try {
       if (currentConversationId) {
-        // 优先回放历史记录以恢复界面渲染状态
-        (async () => {
-          try { await loadChatHistory(currentConversationId); } catch {}
-        })();
+        // 禁用自动加载历史记录功能
+        // (async () => {
+        //   try { await loadChatHistory(currentConversationId); } catch {}
+        // })();
 
         // 4. 自动连接：建立WebSocket连接（由下方组件控制）
         if (!wsConnected && wsConnectionState === 'CLOSED') {
@@ -1178,6 +1370,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
           } else if (currentPath.includes('alternative')) {
             targetPath = '/alternative';
           }
+          // 显示跳转等待页面
+          setLoading(true);
+          
           router.replace(`${targetPath}?conversationId=${tempConversationId}`);
         } else {
           messageHandler.updateAgentMessage('Failed to create a new chat. Please try again.', thinkingMessageId);
@@ -1318,47 +1513,103 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
       return (
         <div key={`${index}-pages`} className="flex justify-start mb-4" style={{ animation: 'fadeIn 0.5s ease-out forwards' }}>
           <div className="max-w-[95%] w-full">
-            {/* 显示/隐藏剩余卡片的控制按钮 */}
-            {remainingCount > 0 && (
-              <div className="flex justify-end mb-1">
-                <button
-                  className="text-xs px-2 py-1 rounded hover:opacity-80"
-                  onClick={() => setHideRemainingCards(v => !v)}
-                  style={{
-                    background: isHydrated ? themeStyles.pagesGrid?.viewButton?.background : 'rgba(148,163,184,0.15)',
-                    color: isHydrated ? themeStyles.pagesGrid?.viewButton?.text : '#CBD5E1',
-                    borderRadius: isHydrated ? themeStyles.pagesGrid?.viewButton?.borderRadius : '8px'
-                  }}
+            {/* 显示/隐藏剩余卡片的控制按钮 - 始终显示 */}
+            <div className="flex justify-center mb-4">
+              <button
+                className="transition-all duration-500 ease-in-out transform hover:scale-105"
+                onClick={() => setHideRemainingCards(v => !v)}
+                style={{
+                  background: 'linear-gradient(90deg, #8B5CF6 0%, #7C3AED 100%)',
+                  borderRadius: '12px',
+                  padding: '16px 24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  boxShadow: '0 4px 20px rgba(139, 92, 246, 0.3)',
+                  border: 'none',
+                  cursor: 'pointer',
+                  minWidth: '320px',
+                  justifyContent: 'space-between'
+                }}
+              >
+                {/* 左侧图标 */}
+                <div className="flex items-center gap-3">
+                  <svg 
+                    width="24" 
+                    height="24" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path 
+                      d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h10v2H7V7zm0 4h10v2H7v-2zm0 4h6v2H7v-2z" 
+                      fill="#60A5FA"
+                    />
+                  </svg>
+                  
+                  {/* 文字内容 */}
+                  <div className="text-left">
+                    <div className="text-white font-bold text-lg leading-tight">
+                      {hideRemainingCards ? 'Show Remaining Cards' : 'Hide Remaining Cards'}
+                    </div>
+                    <div className="text-white/80 text-sm leading-tight">
+                      Click to {hideRemainingCards ? 'show' : 'hide'} quality pages hints ✨
+                    </div>
+                  </div>
+                </div>
+                
+                {/* 右侧箭头 */}
+                <svg 
+                  width="20" 
+                  height="20" 
+                  viewBox="0 0 20 20" 
+                  fill="none" 
+                  xmlns="http://www.w3.org/2000/svg"
                 >
-                  {hideRemainingCards ? 'Show remaining cards' : 'Hide remaining cards'}
-                </button>
-              </div>
-            )}
+                  <path 
+                    d="M7.5 15L12.5 10L7.5 5" 
+                    stroke="white" 
+                    strokeWidth="2" 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
 
             {/* More compact list layout */}
             <div className="flex flex-col gap-1.5" style={{ display: shouldHide ? 'none' : undefined }}>
+
               {remainingPages.map((page: any, idx: number) => (
                 <div
                   key={page.hubPageId || `page-${idx}`}
-                  className="group transition-all duration-200 hover:shadow-lg"
-                  style={{
-                    borderRadius: isHydrated ? themeStyles.pagesGrid?.pageCard?.borderRadius : '12px',
-                    border: (() => {
+                  className={`group transition-all duration-200 hover:shadow-lg rounded-xl p-4 ${
+                    isHydrated ? themeStyles.pagesGrid?.pageCard?.background : 'bg-white'
+                  } ${
+                    (() => {
                       const isSelected = selectedCompetitors.some((c: any) => c.hubPageId === page.hubPageId);
                       if (isSelected) {
-                        return isHydrated ? themeStyles.pagesGrid?.pageCard?.borderSelected : '1px solid var(--Color-, #357BF7)';
+                        return isHydrated ? themeStyles.pagesGrid?.pageCard?.borderSelected : 'border border-blue-600';
                       }
-                      return isHydrated ? themeStyles.pagesGrid?.pageCard?.border : '1px solid transparent';
-                    })(),
-                    background: isHydrated ? themeStyles.pagesGrid?.pageCard?.background : '#292F3B',
-                    padding: '16px'
-                  }}
+                      return isHydrated ? themeStyles.pagesGrid?.pageCard?.border : 'border border-gray-300';
+                    })()
+                  }`}
                   onMouseEnter={(e) => {
                     // 只有当事件目标是最外层div时才改变边框
                     if (e.target === e.currentTarget) {
                       const isSelected = selectedCompetitors.some((c: any) => c.hubPageId === page.hubPageId);
                       if (!isSelected) {
-                        e.currentTarget.style.border = isHydrated ? themeStyles.pagesGrid?.pageCard?.borderHover : '1px solid var(--Gray-Blue-7, #5A6B93)';
+                        if (isHydrated && themeStyles.pagesGrid?.pageCard?.borderHover) {
+                          // 使用主题配置的hover边框
+                          e.currentTarget.className = e.currentTarget.className.replace(
+                            /border\s+border-[a-z-]+/g, 
+                            themeStyles.pagesGrid.pageCard.borderHover
+                          );
+                        } else {
+                          // 使用fallback样式
+                          e.currentTarget.classList.remove('border-gray-300');
+                          e.currentTarget.classList.add('border-gray-400');
+                        }
                       }
                     }
                   }}
@@ -1367,7 +1618,17 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                     if (e.target === e.currentTarget) {
                       const isSelected = selectedCompetitors.some((c: any) => c.hubPageId === page.hubPageId);
                       if (!isSelected) {
-                        e.currentTarget.style.border = isHydrated ? themeStyles.pagesGrid?.pageCard?.border : '1px solid transparent';
+                        if (isHydrated && themeStyles.pagesGrid?.pageCard?.border) {
+                          // 使用主题配置的默认边框
+                          e.currentTarget.className = e.currentTarget.className.replace(
+                            /border\s+border-[a-z-]+/g, 
+                            themeStyles.pagesGrid.pageCard.border
+                          );
+                        } else {
+                          // 使用fallback样式
+                          e.currentTarget.classList.remove('border-gray-400');
+                          e.currentTarget.classList.add('border-gray-300');
+                        }
                       }
                     }
                   }}
@@ -1386,7 +1647,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                               handleCompetitorSelect(page);
                               setTimeout(() => sendSelectedHubId(page.hubPageId), 0);
                             }}
-                            className="w-4 h-4 text-blue-600 bg-transparent border-2 border-gray-400 rounded focus:ring-blue-500 focus:ring-2"
+                            className="w-4 h-4 text-blue-600 bg-transparent border-2 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
                             style={{ accentColor: isHydrated ? themeStyles.pagesGrid?.checkbox?.accentColor : '#357BF7' }}
                           />
                         )}
@@ -1394,11 +1655,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                         {/* Page title */}
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2">
-                            <span className={`text-xs font-medium ${isHydrated ? themeStyles.pagesGrid?.tdkLabel?.text : 'text-gray-500'}`}>
+                            <span className={`text-xs font-medium ${isHydrated ? themeStyles.pagesGrid?.tdkLabel?.text : 'text-gray-700'}`}>
                               T:
                             </span>
-                            <div className={`font-medium leading-tight ${isHydrated ? themeStyles.pagesGrid?.pageTitle?.text : 'text-white'}`}
-                              style={{ fontSize: '0.875rem' }}
+                            <div className={`font-medium leading-tight text-base ${isHydrated ? themeStyles.pagesGrid?.pageTitle?.text : 'text-black'}`}
                               title={page.pageTitle}>
                               {page.pageTitle}
                             </div>
@@ -1411,13 +1671,9 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                         {/* Edit button - only show for non-generated pages; 点击时通过 WebSocket 发送 hubPageId */}
                         {!page.isPageGenerated && (
                           <button
-                            className="text-xs font-medium px-3 py-1 transition-all duration-200 hover:opacity-80 flex items-center gap-1"
-                            style={{
-                              borderRadius: isHydrated ? themeStyles.pagesGrid?.viewButton?.borderRadius : '12px',
-                              background: isHydrated ? themeStyles.pagesGrid?.viewButton?.background : 'linear-gradient(115deg, #AA450B -2.53%, #231109 26.44%, #10132D 48.59%, #101834 68.22%, #0D47A6 96.36%)',
-                              boxShadow: isHydrated ? themeStyles.pagesGrid?.viewButton?.boxShadow : '0px 2px 5px 0px rgba(255, 255, 255, 0.10)',
-                              color: isHydrated ? themeStyles.pagesGrid?.viewButton?.text : 'var(--Color-, #FFF)'
-                            }}
+                            className={`text-xs font-medium px-3 py-1 transition-all duration-200 hover:opacity-80 flex items-center gap-1 rounded-xl text-white ${
+                              isHydrated ? themeStyles.pagesGrid?.viewButton?.background : 'bg-gradient-to-r from-blue-600 via-purple-600 to-orange-500'
+                            }`}
                             onClick={() => {
                               // 点击 Edit 也仅在用户此操作时发送
                               sendSelectedHubId(page.hubPageId);
@@ -1434,20 +1690,16 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                         {/* 查看按钮，在生成的页面展示 */}
                         {page.isPageGenerated && (
                           <button
-                            className="text-xs font-medium px-3 py-1 transition-all duration-200 hover:opacity-80 flex items-center gap-1"
-                            style={{
-                              borderRadius: isHydrated ? themeStyles.pagesGrid?.viewButton?.borderRadius : '12px',
-                              background: isHydrated ? themeStyles.pagesGrid?.viewButton?.background : 'linear-gradient(115deg, #AA450B -2.53%, #231109 26.44%, #10132D 48.59%, #101834 68.22%, #0D47A6 96.36%)',
-                              boxShadow: isHydrated ? themeStyles.pagesGrid?.viewButton?.boxShadow : '0px 2px 5px 0px rgba(255, 255, 255, 0.10)',
-                              color: isHydrated ? themeStyles.pagesGrid?.viewButton?.text : 'var(--Color-, #FFF)'
-                            }}
+                            className={`text-xs font-medium px-3 py-1 transition-all duration-200 hover:opacity-80 flex items-center gap-1 rounded-xl text-white ${
+                              isHydrated ? themeStyles.pagesGrid?.viewButton?.background : 'bg-gradient-to-r from-blue-600 via-purple-600 to-orange-500'
+                            }`}
                             onClick={() => {
                               const idForPreview = page.hubPageId || page.generatedPageId || page.id;
                               const previewUrl = `https://preview.websitelm.site/en/${idForPreview}`;
                               window.open(previewUrl, '_blank');
                             }}
                           >
-                            <span>View</span>
+                            <span>View →</span>
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                                 d="M13 7l5 5m0 0l-5 5m5-5H6" />
@@ -1459,14 +1711,13 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
                     {/* Description row - TDK D */}
                     {page.description && (
-                      <div className={`flex items-start gap-2 mb-3 text-sm`} style={{
-                        marginLeft: !page.isPageGenerated ? '28px' : '0'
-                      }}>
-                        <span className={`text-xs font-medium flex-shrink-0 mt-0.5 ${isHydrated ? themeStyles.pagesGrid?.tdkLabel?.text : 'text-gray-500'}`}>
+                      <div className={`flex items-start gap-2 mb-3 text-sm ${
+                        !page.isPageGenerated ? 'ml-7' : 'ml-0'
+                      }`}>
+                        <span className={`text-xs font-medium flex-shrink-0 mt-0.5 ${isHydrated ? themeStyles.pagesGrid?.tdkLabel?.text : 'text-gray-700'}`}>
                           D:
                         </span>
-                        <div className={`${isHydrated ? themeStyles.pagesGrid?.pageDescription?.text : 'text-gray-400'} leading-relaxed`}
-                          style={{ fontSize: '0.8rem' }}
+                        <div className={`text-sm ${isHydrated ? themeStyles.pagesGrid?.pageDescription?.text : 'text-gray-600'} leading-relaxed`}
                           title={page.description}>
                           {page.description.length > 120 ? `${page.description.substring(0, 120)}...` : page.description}
                         </div>
@@ -1475,10 +1726,10 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
                     {/* Keywords row - TDK K */}
                     {page.relatedKeywords && page.relatedKeywords.length > 0 && (
-                      <div className={`flex items-start gap-2 mb-3 text-sm`} style={{
-                        marginLeft: !page.isPageGenerated ? '28px' : '0'
-                      }}>
-                        <span className={`text-xs font-medium flex-shrink-0 mt-0.5 ${isHydrated ? themeStyles.pagesGrid?.tdkLabel?.text : 'text-gray-500'}`}>
+                      <div className={`flex items-start gap-2 mb-3 text-sm ${
+                        !page.isPageGenerated ? 'ml-7' : 'ml-0'
+                      }`}>
+                        <span className={`text-xs font-medium flex-shrink-0 mt-0.5 ${isHydrated ? themeStyles.pagesGrid?.tdkLabel?.text : 'text-gray-700'}`}>
                           K:
                         </span>
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1486,17 +1737,16 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                             <div className="flex flex-wrap gap-1">
                               {page.relatedKeywords.slice(0, 4).map((keyword: string, kidx: number) => (
                                 <span key={kidx}
-                                  className="px-2 py-1 text-xs"
-                                  style={{
-                                    borderRadius: isHydrated ? themeStyles.pagesGrid?.keywordTag?.borderRadius : '6px',
-                                    background: isHydrated ? themeStyles.pagesGrid?.keywordTag?.background : 'var(--Gray-Blue-8, #415071)',
-                                    color: isHydrated ? themeStyles.pagesGrid?.keywordTag?.text : 'var(--Color-, #FFF)'
-                                  }}>
+                                  className={`px-2 py-1 text-xs rounded-md ${
+                                    isHydrated ? themeStyles.pagesGrid?.keywordTag?.background : 'bg-gray-200'
+                                  } ${
+                                    isHydrated ? themeStyles.pagesGrid?.keywordTag?.text : 'text-black'
+                                  }`}>
                                   {keyword}
                                 </span>
                               ))}
                               {page.relatedKeywords.length > 4 && (
-                                <span className={`text-xs ${isHydrated ? themeStyles.pagesGrid?.metrics?.label : 'text-gray-400'}`}>
+                                <span className={`text-xs ${isHydrated ? themeStyles.pagesGrid?.metrics?.label : 'text-gray-600'}`}>
                                   +{page.relatedKeywords.length - 4}
                                 </span>
                               )}
@@ -1505,17 +1755,16 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                             <>
                               {page.relatedKeywords.slice(0, 3).map((keyword: string, kidx: number) => (
                                 <span key={kidx}
-                                  className="px-2 py-1 text-xs"
-                                  style={{
-                                    borderRadius: isHydrated ? themeStyles.pagesGrid?.keywordTag?.borderRadius : '6px',
-                                    background: isHydrated ? themeStyles.pagesGrid?.keywordTag?.background : 'var(--Gray-Blue-8, #415071)',
-                                    color: isHydrated ? themeStyles.pagesGrid?.keywordTag?.text : 'var(--Color-, #FFF)'
-                                  }}>
+                                  className={`px-2 py-1 text-xs rounded-md ${
+                                    isHydrated ? themeStyles.pagesGrid?.keywordTag?.background : 'bg-gray-200'
+                                  } ${
+                                    isHydrated ? themeStyles.pagesGrid?.keywordTag?.text : 'text-black'
+                                  }`}>
                                   {keyword}
                                 </span>
                               ))}
                               {page.relatedKeywords.length > 3 && (
-                                <span className={`text-xs ${isHydrated ? themeStyles.pagesGrid?.metrics?.label : 'text-gray-400'}`}>
+                                <span className={`text-xs ${isHydrated ? themeStyles.pagesGrid?.metrics?.label : 'text-gray-600'}`}>
                                   +{page.relatedKeywords.length - 3}
                                 </span>
                               )}
@@ -1526,12 +1775,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                     )}
 
                     {/* Metrics row - Traffic, KD */}
-                    <div className={`flex items-center gap-6 text-sm ${isHydrated ? themeStyles.pagesGrid?.metrics?.label : 'text-gray-400'}`} style={{
-                      marginLeft: !page.isPageGenerated ? '28px' : '0'
-                    }}>
+                    <div className={`flex items-center gap-6 text-sm ${isHydrated ? themeStyles.pagesGrid?.metrics?.label : 'text-gray-500'} ${
+                      !page.isPageGenerated ? 'ml-7' : 'ml-0'
+                    }`}>
                       {/* Traffic */}
                       <span>
-                        Traffic: <span className={isHydrated ? themeStyles.pagesGrid?.metrics?.value : 'text-white'}>
+                        Traffic: <span className={isHydrated ? themeStyles.pagesGrid?.metrics?.value : 'text-black'}>
                           {(() => {
                             const trafficValue = String(page.trafficPotential).trim();
                             return (trafficValue !== "0" && trafficValue !== "") ? page.trafficPotential : '-';
@@ -1541,7 +1790,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
                       {/* KD */}
                       <span>
-                        KD: <span className={isHydrated ? themeStyles.pagesGrid?.metrics?.value : 'text-white'}>
+                        KD: <span className={isHydrated ? themeStyles.pagesGrid?.metrics?.value : 'text-black'}>
                           {(() => {
                             const difficultyValue = String(page.difficulty).trim();
                             return (difficultyValue !== "0" && difficultyValue !== "") ? page.difficulty : '-';
@@ -1552,19 +1801,14 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
                     {/* Competitors row for best type */}
                     {page.pageType === 'best' && page.competitors && page.competitors.length > 0 && (
-                      <div className={`flex items-center gap-2 mt-3 text-sm ${isHydrated ? themeStyles.pagesGrid?.metrics?.label : 'text-gray-400'}`} style={{
-                        marginLeft: !page.isPageGenerated ? '28px' : '0'
-                      }}>
+                      <div className={`flex items-center gap-2 mt-3 text-sm ${isHydrated ? themeStyles.pagesGrid?.metrics?.label : 'text-gray-500'} ${
+                        !page.isPageGenerated ? 'ml-7' : 'ml-0'
+                      }`}>
                         <span>Competitors:</span>
                         <div className="flex flex-wrap gap-1">
                           {page.competitors.map((competitor: string, cidx: number) => (
                             <span key={cidx}
-                              className="px-2 py-1 text-xs"
-                              style={{
-                                borderRadius: isHydrated ? themeStyles.pagesGrid?.competitorTag?.borderRadius : '6px',
-                                background: isHydrated ? themeStyles.pagesGrid?.competitorTag?.background : 'var(--Gray-Blue-8, #415071)',
-                                color: isHydrated ? themeStyles.pagesGrid?.competitorTag?.text : 'var(--Color-, #FFF)'
-                              }}>
+                              className={`px-2 py-1 text-xs rounded-md bg-gray-200 text-gray-800`}>
                               {competitor.replace(/^https?:\/\/(www\.)?/, '').substring(0, 20)}
                               {competitor.replace(/^https?:\/\/(www\.)?/, '').length > 20 && '...'}
                             </span>
@@ -1640,6 +1884,25 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
   const isEntryPage = !conversationId;
 
   // 对应老代码第3718行开始的主渲染逻辑
+  // 跳转等待页面显示
+  if (loading) {
+    return (
+      <section className="w-full py-8 sm:py-12 lg:py-16 flex flex-col items-center bg-white dark:bg-gray-900 min-h-[500px] sm:min-h-[600px] lg:min-h-[700px] justify-center px-4 sm:px-6 lg:px-8">
+        <div className="flex flex-col items-center space-y-6">
+          {/* 简洁的C形加载动画 */}
+          <div className="loading-spinner"></div>
+          
+          {/* 加载文本 */}
+          <div className="text-center">
+            <p className="text-gray-700 dark:text-gray-300 text-base sm:text-lg font-medium">
+              Initializing data...
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <>
       <div className={`w-full min-h-screen text-white flex items-center justify-center p-4 relative overflow-hidden ${isHydrated ? themeStyles.background : 'bg-gradient-to-b from-[#121826] to-[#030810]'}`}
@@ -2059,7 +2322,7 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                             </div>
                             <div className="px-3 pb-4 pt-2">
                               <pre className="text-[12px] leading-5 whitespace-pre-wrap break-words">
-{typeof rightOverlay.content === 'string' ? rightOverlay.content : JSON.stringify(rightOverlay.content, null, 2)}
+                                {typeof rightOverlay.content === 'string' ? rightOverlay.content : JSON.stringify(rightOverlay.content, null, 2)}
                               </pre>
                             </div>
                           </div>
@@ -2068,20 +2331,20 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
 
                       {browserTabs.length === 0 ? (
                         <div className="flex-1 overflow-y-auto overflow-y-hidden p-3 h-[calc(100vh-400px)]">
-                          <div className="flex items-center justify-center h-full">
-                            <div className="flex flex-col items-center text-gray-400 text-base">
-                              <div className="w-96 h-88 opacity-60 flex items-center justify-center bg-gray-200 dark:bg-gray-800 rounded-lg">
-                                <svg className="w-24 h-24 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                </svg>
+                                                      <div className="flex items-center justify-center h-full">
+                              <div className="flex flex-col items-center text-gray-600 dark:text-gray-400 text-base">
+                                <div className="w-96 h-88 opacity-60 flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600">
+                                  <svg className="w-24 h-24 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                  </svg>
+                                </div>
+                                <span className="text-gray-700 dark:text-gray-300">Your generated pages will appear here</span>
                               </div>
-                              Your generated pages will appear here
                             </div>
-                          </div>
                         </div>
                       ) : (
                         <div className="p-3">
-                          <div className="flex items-center space-x-0.5 mb-3 overflow-x-auto px-1.5 border-b border-slate-800/80">
+                          <div className="flex items-center space-x-0.5 mb-3 overflow-x-auto px-1.5 border-b border-gray-200 dark:border-slate-800/80">
                             {browserTabs.map((tab) => (
                               <div
                                 key={tab.id}
@@ -2089,15 +2352,12 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                                 className={` 
                                     flex items-center justify-between px-2.5 py-1.5 min-w-[100px] max-w-[160px] cursor-pointer transition-all
                                     ${activeTab === tab.id
-                                    ? 'bg-slate-800/90 text-slate-200'
-                                    : 'bg-slate-900/60 text-slate-500 hover:text-slate-400 hover:bg-slate-800/50'
+                                    ? 'bg-blue-600 text-white dark:bg-slate-800/90 dark:text-slate-200'
+                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-slate-900/60 dark:text-slate-500 dark:hover:text-slate-400 dark:hover:bg-slate-800/50'
                                   }
                                     rounded-t-[6px] relative group
                                   `}
                               >
-                                <span className="text-[11px] font-medium truncate flex-1 leading-none flex items-center">
-                                  {tab.title}
-                                </span>
                               </div>
                             ))}
                           </div>
@@ -2105,17 +2365,30 @@ export const ResearchTool: React.FC<ResearchToolProps> = ({
                           {activeTab && (
                             <div>
                               <div className={`flex items-center gap-2 mb-2 rounded-lg px-2 py-1.5`}>
-                                <div className="w-full px-3 py-1.5 text-xs rounded-[10px] overflow-hidden overflow-ellipsis whitespace-nowrap text-gray-300"
-                                  style={{
-                                    border: '1px solid rgba(255, 255, 255, 0.16)',
-                                    background: '#0B1421'
-                                  }}>
-                                  {browserTabs.find(tab => tab.id === activeTab)?.url}
+                                <div className="flex items-center gap-2 w-full">
+                                  <div className="flex-1 px-3 py-1.5 text-xs rounded-[10px] overflow-hidden overflow-ellipsis whitespace-nowrap text-black dark:text-white bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600">
+                                    {browserTabs.find(tab => tab.id === activeTab)?.url}
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      const currentUrl = browserTabs.find(tab => tab.id === activeTab)?.url;
+                                      if (currentUrl && currentUrl.startsWith('http')) {
+                                        window.open(currentUrl, '_blank');
+                                      }
+                                    }}
+                                    className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white rounded-[10px] transition-colors duration-200 flex items-center gap-1"
+                                    title="publish"
+                                  >
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                    </svg>
+                                    publish
+                                  </button>
                                 </div>
                               </div>
                               <div
                                 ref={iframeContainerRef}
-                                className="bg-white rounded-lg overflow-hidden relative"
+                                className="bg-white dark:bg-gray-800 rounded-lg overflow-hidden relative border border-gray-200 dark:border-gray-600"
                                 style={{ height: 'calc(100vh - 310px)' }}
                               >
                                 <iframe

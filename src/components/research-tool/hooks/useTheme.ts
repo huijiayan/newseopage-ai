@@ -156,10 +156,10 @@ const themeConfigs = {
         },
         pageCard: {
           borderRadius: '12px',
-          border: '1px solid transparent',
-          borderSelected: '1px solid var(--Color-, #357BF7)',
-          borderHover: '1px solid var(--Gray-Blue-7, #5A6B93)',
-          background: '#292F3B'
+          border: 'border border-transparent',
+          borderSelected: 'border border-blue-600',
+          borderHover: 'border border-gray-600',
+          background: 'bg-gray-800'
         },
         checkbox: {
           accentColor: '#357BF7'
@@ -175,13 +175,13 @@ const themeConfigs = {
         },
         keywordTag: {
           borderRadius: '6px',
-          background: 'var(--Gray-Blue-8, #415071)',
-          text: 'var(--Color-, #FFF)'
+          background: 'bg-gray-700',
+          text: 'text-white'
         },
         competitorTag: {
           borderRadius: '6px',
-          background: 'var(--Gray-Blue-8, #415071)',
-          text: 'var(--Color-, #FFF)'
+          background: 'bg-gray-700',
+          text: 'text-white'
         },
         metrics: {
           label: 'text-gray-400',
@@ -189,9 +189,9 @@ const themeConfigs = {
         },
         viewButton: {
           borderRadius: '12px',
-          background: 'linear-gradient(115deg, #AA450B -2.53%, #231109 26.44%, #10132D 48.59%, #101834 68.22%, #0D47A6 96.36%)',
-          boxShadow: '0px 2px 5px 0px rgba(255, 255, 255, 0.10)',
-          text: 'var(--Color-, #FFF)'
+          background: 'bg-gradient-to-r from-orange-600 via-red-600 to-blue-600',
+          boxShadow: 'shadow-md',
+          text: 'text-white'
         },
         pageLimitNotice: {
           background: 'bg-slate-800/60',
@@ -317,6 +317,66 @@ const themeConfigs = {
       },
       infoMessage: {
         text: 'text-blue-600'
+      },
+      pagesGrid: {
+        title: {
+          text: 'text-black',
+          background: 'bg-gray-100',
+          border: 'border-l-2 border-gray-400',
+          highlight: 'text-gray-800'
+        },
+        pageCard: {
+          borderRadius: '12px',
+          border: 'border border-gray-300',
+          borderSelected: 'border border-blue-600',
+          borderHover: 'border border-gray-400',
+          background: 'bg-white'
+        },
+        checkbox: {
+          accentColor: '#357BF7'
+        },
+        pageTitle: {
+          text: 'text-black'
+        },
+        pageDescription: {
+          text: 'text-gray-700'
+        },
+        tdkLabel: {
+          text: 'text-gray-600'
+        },
+        keywordTag: {
+          borderRadius: '6px',
+          background: 'bg-gray-200',
+          text: 'text-gray-800'
+        },
+        competitorTag: {
+          borderRadius: '6px',
+          background: 'bg-gray-200',
+          text: 'text-gray-800'
+        },
+        metrics: {
+          label: 'text-gray-600',
+          value: 'text-black'
+        },
+        viewButton: {
+          borderRadius: '12px',
+          background: 'bg-gradient-to-r from-blue-600 via-purple-600 to-orange-500',
+          boxShadow: 'shadow-md',
+          text: 'text-white'
+        },
+        pageLimitNotice: {
+          background: 'bg-white/90',
+          border: 'border-gray-300/60',
+          text: 'text-sm text-gray-700',
+          button: {
+            shadow: 'shadow-sm hover:shadow-md',
+            background: 'bg-gradient-to-r from-blue-600 to-indigo-600',
+            backgroundHover: 'hover:from-blue-700 hover:to-indigo-700',
+            text: 'text-white',
+            border: 'border-blue-500/30',
+            scale: 'hover:scale-105'
+          }
+        }
       },
       secondaryButton: 'bg-gray-600 hover:bg-gray-500'
     }

@@ -516,7 +516,7 @@ export const themeConfig = {
         
         // 标题区域
         title: {
-          text: 'text-slate-300',
+          text: 'text-white',
           highlight: 'text-slate-200',
           background: 'bg-slate-800/20',
           border: 'border-l-2 border-slate-500'
@@ -524,10 +524,10 @@ export const themeConfig = {
         
         // 页面卡片
         pageCard: {
-          background: '#292F3B',
-          border: '1px solid transparent',
-          borderHover: '1px solid var(--Gray-Blue-7, #5A6B93)',
-          borderSelected: '1px solid var(--Color-, #357BF7)',
+          background: 'bg-gray-800',
+          border: 'border border-transparent',
+          borderHover: 'border border-gray-600',
+          borderSelected: 'border border-blue-600',
           borderRadius: '12px'
         },
         
@@ -538,14 +538,14 @@ export const themeConfig = {
         
         // 页面描述 (新增)
         pageDescription: {
-          text: 'text-gray-400',
+          text: 'text-gray-300',
           background: 'bg-slate-800/30',
           border: 'border-slate-700/30'
         },
         
         // TDK 标签 (新增)
         tdkLabel: {
-          text: 'text-gray-500',
+          text: 'text-gray-400',
           highlight: 'text-cyan-400'
         },
         
@@ -556,9 +556,9 @@ export const themeConfig = {
         
         // View按钮
         viewButton: {
-          background: 'linear-gradient(115deg, #AA450B -2.53%, #231109 26.44%, #10132D 48.59%, #101834 68.22%, #0D47A6 96.36%)',
-          boxShadow: '0px 2px 5px 0px rgba(255, 255, 255, 0.10)',
-          text: 'var(--Color-, #FFF)',
+          background: 'bg-gradient-to-r from-orange-600 via-red-600 to-blue-600',
+          boxShadow: 'shadow-md',
+          text: 'text-white',
           borderRadius: '12px'
         },
         
@@ -570,15 +570,15 @@ export const themeConfig = {
         
         // 关键词标签
         keywordTag: {
-          background: 'var(--Gray-Blue-8, #415071)',
-          text: 'var(--Color-, #FFF)',
+          background: 'bg-gray-700',
+          text: 'text-white',
           borderRadius: '6px'
         },
         
         // 竞争对手标签
         competitorTag: {
-          background: 'var(--Gray-Blue-8, #415071)',
-          text: 'var(--Color-, #FFF)',
+          background: 'bg-gray-700',
+          text: 'text-white',
           borderRadius: '6px'
         },
         
@@ -869,36 +869,36 @@ export const themeConfig = {
         
         // 标题区域
         title: {
-          text: 'text-gray-600',
+          text: 'text-black',
           highlight: 'text-gray-800',
-          background: 'bg-gray-100/50',
+          background: 'bg-gray-100',
           border: 'border-l-2 border-gray-400'
         },
         
         // 页面卡片
         pageCard: {
-          background: '#FFFFFF',
-          border: '1px solid #E5E7EB',
-          borderHover: '1px solid #D1D5DB',
-          borderSelected: '1px solid #357BF7',
+          background: 'bg-white',
+          border: 'border border-gray-300',
+          borderHover: 'border border-gray-400',
+          borderSelected: 'border border-blue-600',
           borderRadius: '12px'
         },
         
         // 页面标题
         pageTitle: {
-          text: 'text-gray-900'
+          text: 'text-black'
         },
         
         // 页面描述 (新增)
         pageDescription: {
-          text: 'text-gray-600',
-          background: 'bg-gray-50/50',
-          border: 'border-gray-200/50'
+          text: 'text-gray-700',
+          background: 'bg-gray-100',
+          border: 'border-gray-300'
         },
         
         // TDK 标签 (新增)
         tdkLabel: {
-          text: 'text-gray-500',
+          text: 'text-gray-600',
           highlight: 'text-blue-600'
         },
         
@@ -909,29 +909,29 @@ export const themeConfig = {
         
         // View按钮
         viewButton: {
-          background: 'linear-gradient(101deg, #336FFF 20.01%, #A671FC 56.73%, #F5894F 92.85%)',
-          boxShadow: '0px 2px 5px 0px rgba(0, 0, 0, 0.10)',
-          text: '#FFF',
+          background: 'bg-gradient-to-r from-blue-600 via-purple-600 to-orange-500',
+          boxShadow: 'shadow-md',
+          text: 'text-white',
           borderRadius: '12px'
         },
         
         // 指标文本
         metrics: {
-          label: 'text-gray-500',
-          value: 'text-gray-900'
+          label: 'text-gray-600',
+          value: 'text-black'
         },
         
         // 关键词标签
         keywordTag: {
-          background: '#E5E7EB',
-          text: '#374151',
+          background: 'bg-gray-200',
+          text: 'text-gray-800',
           borderRadius: '6px'
         },
         
         // 竞争对手标签
         competitorTag: {
-          background: '#E5E7EB',
-          text: '#374151',
+          background: 'bg-gray-200',
+          text: 'text-gray-800',
           borderRadius: '6px'
         },
         

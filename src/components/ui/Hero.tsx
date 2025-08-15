@@ -20,6 +20,7 @@ export const Hero: React.FC = () => {
   const [showAlert, setShowAlert] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isRedirecting, setIsRedirecting] = useState(false);
   const isFirstMessageSentForNewTaskRef = useRef(false);
 
   // 懒加载效果
@@ -206,6 +207,9 @@ export const Hero: React.FC = () => {
               targetPath = '/alternative';
             }
 
+            // 显示跳转等待页面
+            setIsRedirecting(true);
+            
             // 跳转到聊天室页面，传递真实的conversationId
             router.replace(`${targetPath}?conversationId=${newConvId}`);
 
@@ -244,6 +248,9 @@ export const Hero: React.FC = () => {
             targetPath = '/alternative';
           }
 
+          // 显示跳转等待页面
+          setIsRedirecting(true);
+          
           // 跳转到聊天室页面，传递conversationId参数
           router.replace(`${targetPath}?conversationId=${conversationId}`);
           
@@ -415,7 +422,26 @@ export const Hero: React.FC = () => {
           {/* 加载文本 */}
           <div className="text-center">
             <p className="text-gray-700 dark:text-gray-300 text-base sm:text-lg font-medium">
-              Preparing your workspace...
+              Initializing data...
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // 跳转等待页面显示
+  if (isRedirecting) {
+    return (
+      <section className="w-full py-8 sm:py-12 lg:py-16 flex flex-col items-center bg-white dark:bg-gray-900 min-h-[500px] sm:min-h-[600px] lg:min-h-[700px] justify-center px-4 sm:px-6 lg:px-8">
+        <div className="flex flex-col items-center space-y-6">
+          {/* 简洁的C形加载动画 */}
+          <div className="loading-spinner"></div>
+          
+          {/* 加载文本 */}
+          <div className="text-center">
+            <p className="text-gray-700 dark:text-gray-300 text-base sm:text-lg font-medium">
+              Initializing data...
             </p>
           </div>
         </div>
@@ -439,7 +465,7 @@ export const Hero: React.FC = () => {
           WebkitTextFillColor: "transparent",
         }}
       >
-        Get Found When People Search Your Competitor
+        AI Takes Competitor Traffic
       </h1>
                 
       {/* 副标题 */}
