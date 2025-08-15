@@ -63,7 +63,10 @@ interface ApiClient extends AxiosInstance {
   getGscSites: typeof getGscSites;
   getSiteAnalytics: typeof getSiteAnalytics;
   uploadFavicon: typeof uploadFavicon;
-
+  generateAlternative: typeof generateAlternative;
+  getAlternativeDetail: typeof getAlternativeDetail;
+  getAlternativeSources: typeof getAlternativeSources;
+  getAlternativeResult: typeof getAlternativeResult;
 }
 
 const vercelApiClient = axios.create({
@@ -1096,6 +1099,54 @@ const uploadFavicon = async (file: any) => {
   }
 };
 
+// 新增：生成替代方案
+const generateAlternative = async (conversationId: string, hubPageIds: string[], websiteId: string) => {
+  try {
+    const response = await apiClient.post('/alternatively/generate', {
+      conversationId,
+      hubPageIds,
+      websiteId
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Failed to generate alternative:', error);
+    throw error;
+  }
+};
+
+// 新增：获取替代页面详情
+const getAlternativeDetail = async (websiteId: string, options: any = {}) => {
+  try {
+    const response = await apiClient.get(`/alternatively/detail/${websiteId}`, { params: options });
+    return response.data;
+  } catch (error) {
+    console.error('Failed to get alternative detail:', error);
+    throw error;
+  }
+};
+
+// 新增：获取替代方案来源
+const getAlternativeSources = async (websiteId: string) => {
+  try {
+    const response = await apiClient.get(`/alternatively/sources/${websiteId}`);
+    return response.data;
+  } catch (error) {
+    console.error('Failed to get alternative sources:', error);
+    throw error;
+  }
+};
+
+// 新增：获取替代方案结果
+const getAlternativeResult = async (resultId: any) => {
+  try {
+    const response = await apiClient.get(`/alternatively/result/${resultId}`);
+    return response.data;
+  } catch (error) {
+    console.error('Failed to get alternative result:', error);
+    throw error;
+  }
+};
+
 apiClient.getCompetitorResearch = getCompetitorResearch;
 apiClient.login = login;
 apiClient.register = register;
@@ -1157,6 +1208,10 @@ apiClient.cancelGscAuth = cancelGscAuth;
 apiClient.getGscSites = getGscSites;
 apiClient.getSiteAnalytics = getSiteAnalytics;
 apiClient.uploadFavicon = uploadFavicon;
+apiClient.generateAlternative = generateAlternative;
+apiClient.getAlternativeDetail = getAlternativeDetail;
+apiClient.getAlternativeSources = getAlternativeSources;
+apiClient.getAlternativeResult = getAlternativeResult;
 
 // WebSocket连接辅助函数 - 使用统一的WebSocketChatV2服务
 export const createChatWebSocket = async (conversationId: string, domain?: string) => {

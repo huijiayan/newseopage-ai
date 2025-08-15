@@ -3,6 +3,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { ChatRoomService, ChatRoomConfig, ChatRoomResponse, CompetitorSearchResponse, SitemapStatusResponse } from '@/services/chatRoomService';
+import { CompetitorSearchService } from '@/services/competitorSearchService';
 import { getPageMode } from '@/components/research-tool/utils/research-tool-utils';
 
 export interface UseChatRoomOptions {
@@ -60,6 +61,11 @@ export const useChatRoom = (options: UseChatRoomOptions = {}): UseChatRoomReturn
       chatType,
       conversationId
     })
+  );
+
+  // 竞争对手搜索服务实例
+  const competitorSearchServiceRef = useRef<CompetitorSearchService>(
+    new CompetitorSearchService()
   );
 
   // 创建或继续聊天室
@@ -243,15 +249,16 @@ export const useChatRoom = (options: UseChatRoomOptions = {}): UseChatRoomReturn
   const findWebsiteIdByDomain = useCallback(async (domain: string): Promise<string | null> => {
     try {
       setError(null);
-      const websiteId = await chatRoomServiceRef.current.findWebsiteIdByDomain(domain);
-      console.log('🔍 websiteId查找结果:', websiteId);
+      const result = await competitorSearchServiceRef.current.findWebsiteIdByDomain(domain);
+      console.log('🔍 websiteId查找结果:', result);
       
-      if (websiteId) {
-        console.log('🔍 找到websiteId，触发回调:', websiteId);
-        onWebsiteIdFound?.(websiteId);
+      if (result && result.websiteId) {
+        console.log('🔍 找到websiteId，触发回调:', result.websiteId);
+        onWebsiteIdFound?.(result.websiteId);
+        return result.websiteId;
       }
       
-      return websiteId;
+      return null;
     } catch (error: any) {
       console.error('🔍 websiteId查找失败:', error);
       const errorMessage = error.message || 'websiteId查找失败';
